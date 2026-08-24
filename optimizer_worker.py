@@ -1,11 +1,5 @@
-# optimizer_worker.py
 """
-Worker with candidate tracking, resume, and indicator caching.
-
-- Writes per-ticker completed_runs JSONL to completed_runs/{SYMBOL}.jsonl
-- Skips already-evaluated parameter sets (deterministic key)
-- Updates optimizer_results/best_{SYMBOL}.csv and report_{SYMBOL}.json as it finds better presets
-- Updates optimizer_results/progress.csv (via optimize_all.py aggregator)
+Worker with candidate tracking, resume, phased runs, and robustness filtering.
 """
 
 import time
@@ -18,16 +12,17 @@ from typing import Dict, Any, List, Iterator, Tuple
 
 from data_loader import load_candles_from_csv
 from backtest_engine import run_backtest
-from presets import get_presets
+
 
 # -------------------------
-# Helpers: grid expansion (same as before)
+# Grid helpers
 # -------------------------
 def _linspace_float(start: float, stop: float, count: int) -> List[float]:
     if count <= 1:
         return [float(start)]
     step = (stop - start) / (count - 1)
     return [start + i * step for i in range(count)]
+
 
 def _frange_step(start: float, stop: float, step: float) -> List[float]:
     vals = []
@@ -37,6 +32,7 @@ def _frange_step(start: float, stop: float, step: float) -> List[float]:
         vals.append(round(v, 12))
         v += float(step)
     return vals
+
 
 def _expand_spec(value_spec: Any) -> List[Any]:
     if isinstance(value_spec, list):
@@ -54,6 +50,7 @@ def _expand_spec(value_spec: Any) -> List[Any]:
             return _linspace_float(start, stop, count)
     return [value_spec]
 
+
 def _count_combinations(grid_expanded: Dict[str, List[Any]]) -> int:
     total = 1
     for v in grid_expanded.values():
@@ -61,6 +58,7 @@ def _count_combinations(grid_expanded: Dict[str, List[Any]]) -> int:
         if total > 10_000_000:
             return total
     return total
+
 
 def grid_search_params(grid: Dict[str, Any],
                        search_mode: str = "auto",
@@ -105,18 +103,9 @@ def grid_search_params(grid: Dict[str, Any],
         seen.add(keyt)
         yield candidate
 
-    if len(seen) < n_samples:
-        for combo in itertools.product(*(grid_expanded[k] for k in keys)):
-            keyt = tuple((kk, combo[i]) for i, kk in enumerate(keys))
-            if keyt in seen:
-                continue
-            seen.add(keyt)
-            yield dict(zip(keys, combo))
-            if len(seen) >= n_samples:
-                break
 
 # -------------------------
-# Metrics and scoring (profit-first, modest drawdown penalty)
+# Metrics and scoring
 # -------------------------
 def _build_equity_series_from_trades(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     by_bar = {}
@@ -134,6 +123,7 @@ def _build_equity_series_from_trades(trades: List[Dict[str, Any]]) -> List[Dict[
         equity.append({"bar_index": int(idx), "equity": float(cum)})
     return equity
 
+
 def _compute_max_drawdown(equity_series: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not equity_series:
         return {"max_drawdown": 0.0, "max_drawdown_pct": 0.0, "max_drawdown_duration": 0}
@@ -142,7 +132,6 @@ def _compute_max_drawdown(equity_series: List[Dict[str, Any]]) -> Dict[str, Any]
     max_dd = 0.0
     max_dd_pct = 0.0
     trough_idx = peak_idx
-    recovery_idx = None
     for point in equity_series:
         idx = point["bar_index"]
         eq = point["equity"]
@@ -155,25 +144,9 @@ def _compute_max_drawdown(equity_series: List[Dict[str, Any]]) -> Dict[str, Any]
             max_dd = dd
             max_dd_pct = dd_pct
             trough_idx = idx
-            recovery_idx = None
-    if max_dd > 0:
-        peak_val = None
-        for p in equity_series:
-            if p["bar_index"] <= trough_idx:
-                if peak_val is None or p["equity"] > peak_val:
-                    peak_val = p["equity"]
-        rec_idx = None
-        for p in equity_series:
-            if p["bar_index"] > trough_idx and p["equity"] >= (peak_val or 0.0):
-                rec_idx = p["bar_index"]
-                break
-        recovery_idx = rec_idx
-    duration = 0
-    if recovery_idx is not None and peak_idx is not None:
-        duration = recovery_idx - peak_idx
-    elif trough_idx is not None and peak_idx is not None:
-        duration = trough_idx - peak_idx
+    duration = max(0, trough_idx - peak_idx)
     return {"max_drawdown": float(max_dd), "max_drawdown_pct": float(max_dd_pct), "max_drawdown_duration": int(duration)}
+
 
 def compute_metrics_from_run(res: Dict[str, Any]) -> Dict[str, Any]:
     trades = res.get("trade_dicts", [])
@@ -198,37 +171,47 @@ def compute_metrics_from_run(res: Dict[str, Any]) -> Dict[str, Any]:
         "max_drawdown_duration": dd["max_drawdown_duration"],
     }
 
+
+def _safe_pf(pf: float) -> float:
+    if pf == float("inf"):
+        return 10.0
+    return max(0.0, min(float(pf), 10.0))
+
+
 def score_candidate(metrics: Dict[str, Any]) -> float:
-    net_profit = metrics.get("net_profit", 0.0)
-    dd_pct = metrics.get("max_drawdown_pct", 0.0)
-    pf = metrics.get("profit_factor", 0.0)
-    win_rate = metrics.get("win_rate", 0.0)
-    trade_count = metrics.get("trade_count", 1)
-    profit_component = net_profit * 1.0
-    drawdown_penalty = dd_pct * 100.0
-    pf_component = pf * 50.0
-    win_component = win_rate * 50.0
-    trade_penalty = max(0, trade_count - 400) * 0.1
-    score = profit_component + pf_component + win_component - drawdown_penalty - trade_penalty
-    return score
+    # Priority: PF and drawdown; secondary: net profit + win rate.
+    net_profit = float(metrics.get("net_profit", 0.0))
+    dd_pct = float(metrics.get("max_drawdown_pct", 0.0))
+    pf = _safe_pf(float(metrics.get("profit_factor", 0.0)))
+    win_rate = float(metrics.get("win_rate", 0.0))
+    trade_count = int(metrics.get("trade_count", 0))
+
+    pf_component = pf * 250.0
+    drawdown_penalty = dd_pct * 180.0
+    profit_component = net_profit * 0.6
+    win_component = win_rate * 30.0
+    low_sample_penalty = 25.0 if trade_count < 30 else 0.0
+
+    return pf_component + profit_component + win_component - drawdown_penalty - low_sample_penalty
+
 
 # -------------------------
 # Tracking helpers
 # -------------------------
 def _param_key(params: Dict[str, Any]) -> str:
-    # deterministic key: sorted items JSON
     return json.dumps({k: params[k] for k in sorted(params.keys())}, sort_keys=True, separators=(",", ":"))
 
-def _append_completed_run(symbol: str, record: Dict[str, Any]):
+
+def _append_completed_run(symbol: str, phase: str, record: Dict[str, Any]) -> None:
     out_dir = Path("completed_runs")
     out_dir.mkdir(exist_ok=True)
-    path = out_dir / f"{symbol}.jsonl"
-    # atomic append
+    path = out_dir / f"{symbol}_{phase}.jsonl"
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
-def _load_completed_keys(symbol: str) -> set:
-    path = Path("completed_runs") / f"{symbol}.jsonl"
+
+def _load_completed_keys(symbol: str, phase: str) -> set:
+    path = Path("completed_runs") / f"{symbol}_{phase}.jsonl"
     if not path.exists():
         return set()
     keys = set()
@@ -243,10 +226,11 @@ def _load_completed_keys(symbol: str) -> set:
                 continue
     return keys
 
-def _write_best_csv(symbol: str, top: List[Dict[str, Any]]):
+
+def _write_best_csv(symbol: str, top: List[Dict[str, Any]], phase: str) -> str:
     out_dir = Path("optimizer_results")
     out_dir.mkdir(exist_ok=True)
-    csv_path = out_dir / f"best_{symbol}.csv"
+    csv_path = out_dir / f"best_{symbol}_{phase}.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -264,17 +248,92 @@ def _write_best_csv(symbol: str, top: List[Dict[str, Any]]):
                 m.get("max_drawdown_pct", 0.0),
                 json.dumps(c["params"])
             ])
+    return str(csv_path)
 
-def _write_report(symbol: str, top: List[Dict[str, Any]]):
+
+def _write_report(symbol: str, top: List[Dict[str, Any]], phase: str, note: str) -> str:
     out_dir = Path("optimizer_results")
     out_dir.mkdir(exist_ok=True)
-    report_path = out_dir / f"report_{symbol}.json"
+    report_path = out_dir / f"report_{symbol}_{phase}.json"
     if top:
         best = top[0]
-        r = {"symbol": symbol, "best_params": best["params"], "metrics": best["metrics"], "score": best["score"]}
+        r = {
+            "symbol": symbol,
+            "phase": phase,
+            "note": note,
+            "best_params": best["params"],
+            "metrics": best["metrics"],
+            "score": best["score"],
+            "robustness": best.get("robustness"),
+        }
         report_path.write_text(json.dumps(r, indent=2))
     else:
-        report_path.write_text(json.dumps({"symbol": symbol, "error": "no profitable candidates"}, indent=2))
+        report_path.write_text(json.dumps({"symbol": symbol, "phase": phase, "note": note, "error": "no valid candidates"}, indent=2))
+    return str(report_path)
+
+
+def _segment_candles(candles: List[Dict[str, Any]], segments: int) -> List[List[Dict[str, Any]]]:
+    if segments <= 1 or len(candles) < segments * 20:
+        return [candles]
+    n = len(candles)
+    out = []
+    for i in range(segments):
+        s = int(i * n / segments)
+        e = int((i + 1) * n / segments)
+        part = candles[s:e]
+        if len(part) >= 20:
+            out.append(part)
+    return out if out else [candles]
+
+
+def _robustness_filter(
+    candles: List[Dict[str, Any]],
+    candidates: List[Dict[str, Any]],
+    robustness_cfg: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], str]:
+    if not bool(robustness_cfg.get("enabled", True)):
+        return candidates, "robustness disabled"
+
+    segments = int(robustness_cfg.get("segments", 3))
+    evaluate_top_n = int(robustness_cfg.get("evaluate_top_n", 8))
+    pf_floor = float(robustness_cfg.get("reject_if_any_segment_pf_below", 1.0))
+    net_floor = float(robustness_cfg.get("reject_if_any_segment_net_profit_below_or_equal", 0.0))
+
+    segmented = _segment_candles(candles, segments)
+    if len(segmented) <= 1:
+        return candidates, "robustness skipped (not enough candles)"
+
+    checked = candidates[:max(1, evaluate_top_n)]
+    survivors: List[Dict[str, Any]] = []
+
+    for c in checked:
+        params = c["params"]
+        seg_stats = []
+        reject = False
+        for seg in segmented:
+            res = run_backtest(seg, params)
+            m = compute_metrics_from_run(res)
+            seg_stats.append({
+                "net_profit": m.get("net_profit", 0.0),
+                "profit_factor": m.get("profit_factor", 0.0),
+                "max_drawdown_pct": m.get("max_drawdown_pct", 0.0),
+                "trade_count": m.get("trade_count", 0),
+            })
+            if float(m.get("profit_factor", 0.0)) <= pf_floor or float(m.get("net_profit", 0.0)) <= net_floor:
+                reject = True
+                break
+        if reject:
+            continue
+        c2 = dict(c)
+        c2["robustness"] = {"segments": len(segmented), "segment_metrics": seg_stats}
+        survivors.append(c2)
+
+    if survivors:
+        survivors.sort(key=lambda x: x["score"], reverse=True)
+        return survivors + candidates[evaluate_top_n:], f"robustness kept {len(survivors)}/{len(checked)} checked candidates"
+
+    return candidates, "robustness rejected all checked candidates; fallback to unfiltered ranking"
+
 
 # -------------------------
 # Worker
@@ -282,26 +341,33 @@ def _write_report(symbol: str, top: List[Dict[str, Any]]):
 def optimize_ticker(cfg: Dict[str, Any],
                     grid: Dict[str, Any],
                     intrabar_paths: List[str],
-                    top_k: int = 3,
-                    time_budget: int = 3600,
+                    top_k: int = 5,
+                    time_budget: int = 1800,
                     search_mode: str = "auto",
                     n_samples: int = 1000,
                     seed: int = 0,
-                    max_exhaustive: int = 200000) -> Dict[str, Any]:
+                    max_exhaustive: int = 200000,
+                    execution: Dict[str, Any] = None,
+                    robustness: Dict[str, Any] = None,
+                    phase: str = "constrained") -> Dict[str, Any]:
     symbol = cfg.get("symbol")
     tsv = cfg.get("tsv")
     start_time = time.time()
 
-    # Load candles once (caching)
-    candles = load_candles_from_csv(tsv)
+    execution = execution or {}
+    robustness = robustness or {}
 
-    # Load completed keys to resume
-    completed_keys = _load_completed_keys(symbol)
+    candles = load_candles_from_csv(tsv)
+    completed_keys = _load_completed_keys(symbol, phase)
 
     best_candidates: List[Dict[str, Any]] = []
     evaluated = 0
 
-    # Iterate candidates
+    slippage = float(execution.get("slippage", 0.0))
+    commission_pct = float(execution.get("commission_pct", 0.0))
+    position_size = float(execution.get("position_size", 1.0))
+    pyramiding = int(execution.get("pyramiding", 1))
+
     for params in grid_search_params(grid, search_mode=search_mode, n_samples=n_samples, max_exhaustive=max_exhaustive, seed=seed):
         if time.time() - start_time > time_budget:
             break
@@ -311,23 +377,21 @@ def optimize_ticker(cfg: Dict[str, Any],
             run_params.update({
                 "ticker": symbol,
                 "intrabar_path": path,
-                "position_size": 1.0,
-                "slippage": 0.0,
-                "commission_pct": 0.0
+                "position_size": position_size,
+                "slippage": slippage,
+                "commission_pct": commission_pct,
+                "pyramiding": pyramiding,
             })
 
             key = _param_key(run_params)
             if key in completed_keys:
-                # skip already evaluated
                 continue
 
-            # Run backtest
             res = run_backtest(candles, run_params)
             metrics = compute_metrics_from_run(res)
 
-            # Hard filters: require positive profit and PF>1
+            # hard filter: profitable and PF > 1
             if metrics.get("net_profit", 0.0) <= 0.0 or metrics.get("profit_factor", 0.0) <= 1.0:
-                # record as completed but do not include in best_candidates
                 rec = {
                     "timestamp": time.time(),
                     "_param_key": key,
@@ -336,12 +400,11 @@ def optimize_ticker(cfg: Dict[str, Any],
                     "score": None,
                     "status": "rejected"
                 }
-                _append_completed_run(symbol, rec)
+                _append_completed_run(symbol, phase, rec)
                 completed_keys.add(key)
                 evaluated += 1
                 continue
 
-            # compute score and record
             score = score_candidate(metrics)
             candidate = {"params": run_params, "metrics": metrics, "score": score, "res": res}
             best_candidates.append(candidate)
@@ -354,31 +417,36 @@ def optimize_ticker(cfg: Dict[str, Any],
                 "score": score,
                 "status": "accepted"
             }
-            _append_completed_run(symbol, rec)
+            _append_completed_run(symbol, phase, rec)
             completed_keys.add(key)
             evaluated += 1
 
-            # keep only top_k in memory
             best_candidates.sort(key=lambda x: x["score"], reverse=True)
-            best_candidates = best_candidates[:max(10, top_k)]
+            best_candidates = best_candidates[:max(20, top_k)]
 
-            # update best CSV/report incrementally
-            top = best_candidates[:top_k]
-            _write_best_csv(symbol, top)
-            _write_report(symbol, top)
-
-            # check time budget
             if time.time() - start_time > time_budget:
                 break
 
-    # Finalize
     best_candidates.sort(key=lambda x: x["score"], reverse=True)
+
+    robust_note = "robustness not run"
+    if best_candidates:
+        best_candidates, robust_note = _robustness_filter(candles, best_candidates, robustness)
+        best_candidates.sort(key=lambda x: x["score"], reverse=True)
+
     top = best_candidates[:top_k]
 
-    # If no accepted candidates, write a report indicating none found
-    if not top:
-        _write_best_csv(symbol, [])
-        _write_report(symbol, [])
+    csv_path = _write_best_csv(symbol, top, phase)
+    report_path = _write_report(symbol, top, phase, robust_note)
 
     elapsed = time.time() - start_time
-    return {"symbol": symbol, "top": top, "csv": str(Path("optimizer_results") / f"best_{symbol}.csv"), "report": str(Path("optimizer_results") / f"report_{symbol}.json"), "evaluated": evaluated, "elapsed_seconds": elapsed}
+    return {
+        "symbol": symbol,
+        "phase": phase,
+        "top": top,
+        "csv": csv_path,
+        "report": report_path,
+        "evaluated": evaluated,
+        "elapsed_seconds": elapsed,
+        "note": robust_note,
+    }
