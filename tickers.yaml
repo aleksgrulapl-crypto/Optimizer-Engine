@@ -1,0 +1,61 @@
+# tickers.yaml
+# Replace the placeholder symbols (TICKER01..TICKER30) with your actual tickers
+# and update tsv/tv_export paths as needed. Keep up to 30 entries.
+tickers:
+  - symbol: NVDA
+    timeframe: 15m
+    tsv: data/NVDA_15m.tsv
+    tv_export: null
+  - symbol: MU
+    timeframe: 15m
+    tsv: data/MU_15m.tsv
+    tv_export: null
+  - symbol: AAPL
+    timeframe: 15m
+    tsv: data/AAPL_15m.tsv
+    tv_export: null
+  - symbol: MSFT
+    timeframe: 15m
+    tsv: data/MSFT_15m.tsv
+    tv_export: null
+  - symbol: PLTR
+    timeframe: 15m
+    tsv: data/PLTR_15m.tsv
+    tv_export: null
+  - symbol: QBTS
+    timeframe: 15m
+    tsv: data/QBTS_15m.tsv
+    tv_export: null
+  
+
+# Grid to search (expand or reduce depending on compute)
+grid:
+  stMultiplier:
+    start: 1.2
+    stop: 4.0
+    step: 0.1
+  stPeriod:
+    min: 6
+    max: 18
+    count: 7
+  atrSLmult:
+    start: 1.2
+    stop: 2.4
+    step: 0.1
+  atrTPmult:
+    min: 2.0
+    max: 5.0
+    count: 7
+  emaLen:
+    min: 50
+    max: 250
+    count: 21
+search_mode: "exhaustive"
+n_samples_per_ticker: 2000
+random_seed: 42
+max_exhaustive: 200000
+
+parallel_workers: 4
+intrabar_paths: ["ohlc", "olhc"]
+top_k_per_ticker: 3
+time_budget_seconds_per_ticker: 3600  # per-ticker timeout (seconds)
