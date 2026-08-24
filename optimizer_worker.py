@@ -362,17 +362,25 @@ def optimize_ticker(cfg: Dict[str, Any],
 
     best_candidates: List[Dict[str, Any]] = []
     evaluated = 0
+    best_score_so_far: float = float("-inf")
 
     slippage = float(execution.get("slippage", 0.0))
     commission_pct = float(execution.get("commission_pct", 0.0))
     position_size = float(execution.get("position_size", 1.0))
     pyramiding = int(execution.get("pyramiding", 1))
 
+    # Pre-count total combinations for progress display
+    grid_expanded: Dict[str, List[Any]] = {k: _expand_spec(v) for k, v in grid.items()}
+    total_combos = _count_combinations(grid_expanded) * len(intrabar_paths)
+
+    scan_counter = 0
+
     for params in grid_search_params(grid, search_mode=search_mode, n_samples=n_samples, max_exhaustive=max_exhaustive, seed=seed):
         if time.time() - start_time > time_budget:
             break
 
         for path in intrabar_paths:
+            scan_counter += 1
             run_params = dict(params)
             run_params.update({
                 "ticker": symbol,
@@ -384,14 +392,22 @@ def optimize_ticker(cfg: Dict[str, Any],
             })
 
             key = _param_key(run_params)
+
+            print(f"[{symbol}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated} | best_score={best_score_so_far:.2f}" if best_score_so_far != float('-inf') else f"[{symbol}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated}", flush=True)
+
             if key in completed_keys:
                 continue
 
             res = run_backtest(candles, run_params)
             metrics = compute_metrics_from_run(res)
 
-            # hard filter: profitable and PF > 1
-            if metrics.get("net_profit", 0.0) <= 0.0 or metrics.get("profit_factor", 0.0) <= 1.0:
+            # Hard filters: net profit > 0, PF >= 1.3, win rate >= 30%, at least 10 trades
+            pf = float(metrics.get("profit_factor", 0.0))
+            net = float(metrics.get("net_profit", 0.0))
+            wr = float(metrics.get("win_rate", 0.0))
+            tc = int(metrics.get("trade_count", 0))
+
+            if net <= 0.0 or pf < 1.3 or wr < 0.30 or tc < 10:
                 rec = {
                     "timestamp": time.time(),
                     "_param_key": key,
@@ -408,6 +424,20 @@ def optimize_ticker(cfg: Dict[str, Any],
             score = score_candidate(metrics)
             candidate = {"params": run_params, "metrics": metrics, "score": score, "res": res}
             best_candidates.append(candidate)
+
+            if score > best_score_so_far:
+                best_score_so_far = score
+                print(
+                    f"\n*** [{symbol}][{phase}] NEW BEST FOUND ***\n"
+                    f"    Score:         {score:.4f}\n"
+                    f"    Profit Factor: {pf:.4f}\n"
+                    f"    Net Profit:    {net:.4f}\n"
+                    f"    Win Rate:      {wr*100:.1f}%\n"
+                    f"    Max DD:        {metrics.get('max_drawdown_pct', 0.0)*100:.2f}%\n"
+                    f"    Trade Count:   {tc}\n"
+                    f"    Params:        {json.dumps(run_params)}\n",
+                    flush=True,
+                )
 
             rec = {
                 "timestamp": time.time(),
