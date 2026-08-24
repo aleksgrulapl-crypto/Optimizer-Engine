@@ -1,29 +1,48 @@
-README - quick run and parity checklist
+Optimizer Engine - Runbook
 
-1) Install dependencies (if not already):
+Core files in this repository:
+- /home/runner/work/Optimizer-Engine/Optimizer-Engine/backtest_engine.py
+- /home/runner/work/Optimizer-Engine/Optimizer-Engine/data_loader.py
+- /home/runner/work/Optimizer-Engine/Optimizer-Engine/optimizer_worker.py
+- /home/runner/work/Optimizer-Engine/Optimizer-Engine/optimize_all.py
+- /home/runner/work/Optimizer-Engine/Optimizer-Engine/presets.py
+- /home/runner/work/Optimizer-Engine/Optimizer-Engine/tickers.yaml
+- /home/runner/work/Optimizer-Engine/Optimizer-Engine/export_trades.py
+- /home/runner/work/Optimizer-Engine/Optimizer-Engine/compare_parity.py
+
+Workflow (required order):
+1) Data sanity check
+2) Parity check
+3) Constrained optimize
+4) Expand optimize
+5) Robustness check
+6) Finalize presets
+
+1) Install dependencies:
    python -m pip install pyyaml pandas pytz
 
-2) Place your tickers.yaml in repo root (or tickers.json).
-   Example tickers.yaml already discussed.
+2) Parity export (single ticker, fixed params):
+   python export_trades.py \
+     --input data/NVDA_15m.tsv \
+     --output optimizer_results/parity_nvda.csv \
+     --ticker NVDA \
+     --intrabar-path ohlc \
+     --slippage 0.0 \
+     --commission-pct 0.0 \
+     --position-size 1.0
 
-3) Run the optimizer:
+3) Compare with TradingView export:
+   python compare_parity.py optimizer_results/parity_nvda.csv AutoTrader_15M_NASDAQ_NVDA_2026-08-20.csv
+
+4) If parity is acceptable, set parity_ok: true in /home/runner/work/Optimizer-Engine/Optimizer-Engine/tickers.yaml
+
+5) Run phased optimization:
    python optimize_all.py
 
-4) Per-ticker outputs:
-   optimizer_results/best_{SYMBOL}.csv
-   optimizer_results/report_{SYMBOL}.json
-
-5) Parity check:
-   - Export TradingView trades for a symbol (CSV).
-   - Save engine trades for that symbol: open optimizer_results/report_{SYMBOL}.json and extract 'res' if needed.
-   - Run:
-       python compare_parity.py engine_trades.json tradingview.csv
-     (engine_trades.json should be a JSON array of trade dicts; you can create it from the 'res' object.)
-
-6) If parity mismatches:
-   - Run a single backtest for the preset and paste the first 10 engine trades and the first 10 TV CSV rows into the chat.
-   - I will analyze and produce a targeted fix.
-
-Notes:
-- Scoring: profit-first, modest drawdown penalty, PF rewarded, WR secondary.
-- If you want stronger drawdown penalty or parity-first optimization, tell me and I will regenerate optimizer_worker.py with new weights.
+Outputs:
+- optimizer_results/best_{SYMBOL}_constrained.csv
+- optimizer_results/best_{SYMBOL}_expanded.csv
+- optimizer_results/report_{SYMBOL}_constrained.json
+- optimizer_results/report_{SYMBOL}_expanded.json
+- optimizer_results/best_presets.csv
+- optimizer_results/progress.csv

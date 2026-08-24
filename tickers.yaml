@@ -1,61 +1,84 @@
-# tickers.yaml
-# Replace the placeholder symbols (TICKER01..TICKER30) with your actual tickers
-# and update tsv/tv_export paths as needed. Keep up to 30 entries.
+# backtesting configuration
+# Workflow: data sanity -> parity check -> constrained optimize -> expand optimize -> robustness validation
+
 tickers:
   - symbol: NVDA
     timeframe: 15m
     tsv: data/NVDA_15m.tsv
-    tv_export: null
-  - symbol: MU
-    timeframe: 15m
-    tsv: data/MU_15m.tsv
-    tv_export: null
-  - symbol: AAPL
-    timeframe: 15m
-    tsv: data/AAPL_15m.tsv
-    tv_export: null
-  - symbol: MSFT
-    timeframe: 15m
-    tsv: data/MSFT_15m.tsv
-    tv_export: null
-  - symbol: PLTR
-    timeframe: 15m
-    tsv: data/PLTR_15m.tsv
-    tv_export: null
-  - symbol: QBTS
-    timeframe: 15m
-    tsv: data/QBTS_15m.tsv
-    tv_export: null
-  
+    tv_export: AutoTrader_15M_NASDAQ_NVDA_2026-08-20.csv
+    parity_ok: false
 
-# Grid to search (expand or reduce depending on compute)
-grid:
+execution:
+  intrabar_path: ohlc
+  slippage: 0.0
+  commission_pct: 0.0
+  position_size: 1.0
+  pyramiding: 1
+
+# parity gate: optimization is skipped for tickers without parity_ok=true
+parity:
+  require_tv_export: true
+  require_parity_ok: true
+
+# constrained search: stable region discovery
+grid_constrained:
   stMultiplier:
-    start: 1.2
-    stop: 4.0
-    step: 0.1
+    start: 1.6
+    stop: 2.4
+    step: 0.2
   stPeriod:
     min: 6
-    max: 18
-    count: 7
+    max: 12
+    count: 4
   atrSLmult:
+    start: 1.0
+    stop: 1.6
+    step: 0.2
+  atrTPmult:
+    min: 2.5
+    max: 4.5
+    count: 5
+  emaLen:
+    min: 30
+    max: 90
+    count: 4
+
+# expanded search: widen around constrained findings
+grid_expand:
+  stMultiplier:
     start: 1.2
-    stop: 2.4
-    step: 0.1
+    stop: 3.0
+    step: 0.2
+  stPeriod:
+    min: 6
+    max: 16
+    count: 6
+  atrSLmult:
+    start: 0.8
+    stop: 2.0
+    step: 0.2
   atrTPmult:
     min: 2.0
-    max: 5.0
-    count: 7
+    max: 5.5
+    count: 8
   emaLen:
-    min: 50
-    max: 250
-    count: 21
-search_mode: "exhaustive"
+    min: 20
+    max: 150
+    count: 8
+
+search_mode: auto
 n_samples_per_ticker: 2000
 random_seed: 42
-max_exhaustive: 200000
+max_exhaustive: 150000
 
-parallel_workers: 4
-intrabar_paths: ["ohlc", "olhc"]
-top_k_per_ticker: 3
-time_budget_seconds_per_ticker: 3600  # per-ticker timeout (seconds)
+parallel_workers: 2
+top_k_per_ticker: 5
+time_budget_seconds_per_ticker: 1800
+
+# optional post-optimization stability check on top candidates
+robustness:
+  enabled: true
+  segments: 3
+  evaluate_top_n: 8
+  reject_if_any_segment_pf_below: 1.0
+  reject_if_any_segment_net_profit_below_or_equal: 0.0

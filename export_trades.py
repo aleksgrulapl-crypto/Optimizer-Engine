@@ -1,10 +1,5 @@
-# run_backtest_and_export.py
 """
-Robust runner to load candles, run the backtest engine, and export trades to CSV.
-- Uses data_loader.load_candles_from_csv (expects data_loader.py from previous step).
-- Uses backtest_engine.run_backtest (expects backtest_engine.py from previous step).
-- Writes a CSV with a stable set of columns and ISO timestamps.
-- Safe parsing, logging, and configurable paths/params.
+Run backtest and export trades for TradingView parity checks.
 """
 
 import csv
@@ -15,6 +10,7 @@ from pathlib import Path
 
 from backtest_engine import run_backtest
 from data_loader import load_candles_from_csv
+from presets import get_presets
 
 
 DEFAULT_FIELDNAMES = [
@@ -34,12 +30,7 @@ DEFAULT_FIELDNAMES = [
 
 
 def _normalize_trade_row(trade: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Ensure the trade dict contains the expected keys and format timestamps as ISO strings.
-    Missing keys are filled with empty strings or zeros where appropriate.
-    """
     out = {}
-    # Time fields: accept datetime-like or numeric; convert to ISO string if possible
     for k in ("entry_time", "exit_time"):
         v = trade.get(k, "")
         if hasattr(v, "isoformat"):
@@ -47,23 +38,13 @@ def _normalize_trade_row(trade: Dict[str, Any]) -> Dict[str, Any]:
         else:
             out[k] = str(v) if v is not None else ""
 
-    out["side"] = trade.get("side", "")
-    out["entry_price"] = trade.get("entry_price", "")
-    out["exit_price"] = trade.get("exit_price", "")
-    out["size"] = trade.get("size", "")
-    out["pnl"] = trade.get("pnl", "")
-    out["pnl_gross"] = trade.get("pnl_gross", "")
-    out["commission"] = trade.get("commission", "")
-    out["exit_reason"] = trade.get("exit_reason", "")
-    out["entry_bar_index"] = trade.get("entry_bar_index", "")
-    out["exit_bar_index"] = trade.get("exit_bar_index", "")
+    for k in DEFAULT_FIELDNAMES:
+        if k not in out:
+            out[k] = trade.get(k, "")
     return out
 
 
 def export_trades_csv(trades: List[Dict[str, Any]], out_path: str, fieldnames: List[str] = None) -> None:
-    """
-    Export trades to CSV. If trades contain additional keys, they are ignored.
-    """
     if fieldnames is None:
         fieldnames = DEFAULT_FIELDNAMES
 
@@ -75,22 +56,28 @@ def export_trades_csv(trades: List[Dict[str, Any]], out_path: str, fieldnames: L
         writer.writeheader()
         for t in trades:
             row = _normalize_trade_row(t)
-            # Keep only requested columns
             filtered = {k: row.get(k, "") for k in fieldnames}
             writer.writerow(filtered)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Run backtest and export trades to CSV.")
     parser.add_argument("--input", "-i", required=True, help="Path to candles CSV/TSV file.")
     parser.add_argument("--output", "-o", default="trades_export.csv", help="Output CSV path.")
     parser.add_argument("--ticker", "-t", default="NVDA", help="Ticker preset to use.")
-    parser.add_argument("--intrabar-path", choices=["ohlc", "olhc"], default="ohlc",
-                        help="Intrabar simulation path to use (ohlc or olhc).")
-    parser.add_argument("--slippage", type=float, default=0.0, help="Slippage per fill (price units).")
-    parser.add_argument("--commission-pct", type=float, default=0.0, help="Commission fraction per trade (e.g., 0.001).")
-    parser.add_argument("--position-size", type=float, default=1.0, help="Fixed contract/share size per entry.")
-    parser.add_argument("--pyramiding", type=int, default=1, help="Max concurrent entries per side.")
+    parser.add_argument("--intrabar-path", choices=["ohlc", "olhc"], default="ohlc")
+    parser.add_argument("--slippage", type=float, default=0.0)
+    parser.add_argument("--commission-pct", type=float, default=0.0)
+    parser.add_argument("--position-size", type=float, default=1.0)
+    parser.add_argument("--pyramiding", type=int, default=1)
+
+    # Optional explicit strategy params to exactly match TradingView setup.
+    parser.add_argument("--st-multiplier", type=float, default=None)
+    parser.add_argument("--st-period", type=int, default=None)
+    parser.add_argument("--atr-sl-mult", type=float, default=None)
+    parser.add_argument("--atr-tp-mult", type=float, default=None)
+    parser.add_argument("--ema-len", type=int, default=None)
+
     args = parser.parse_args()
 
     try:
@@ -99,6 +86,7 @@ def main():
         print(f"Failed to load candles from {args.input}: {e}", file=sys.stderr)
         sys.exit(2)
 
+    preset = get_presets(args.ticker)
     params = {
         "ticker": args.ticker,
         "intrabar_path": args.intrabar_path,
@@ -106,6 +94,11 @@ def main():
         "commission_pct": args.commission_pct,
         "position_size": args.position_size,
         "pyramiding": args.pyramiding,
+        "stMultiplier": args.st_multiplier if args.st_multiplier is not None else preset.get("stMultiplier"),
+        "stPeriod": args.st_period if args.st_period is not None else preset.get("stPeriod"),
+        "atrSLmult": args.atr_sl_mult if args.atr_sl_mult is not None else preset.get("atrSLmult"),
+        "atrTPmult": args.atr_tp_mult if args.atr_tp_mult is not None else preset.get("atrTPmult"),
+        "emaLen": args.ema_len if args.ema_len is not None else preset.get("emaLen"),
     }
 
     try:

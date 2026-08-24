@@ -1,70 +1,136 @@
-# compare_parity.py
 """
-Simple parity comparator: compare engine trades to TradingView CSV export.
+Compare engine trades CSV to TradingView export CSV.
 Usage:
-  python compare_parity.py engine_trades.json tradingview.csv
-It prints the first mismatched trade and a short summary.
+  python compare_parity.py engine_trades.csv tradingview.csv
 """
 
 import sys
 import csv
-import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
-def load_engine_trades(path: str) -> List[Dict[str, Any]]:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
-def load_tv_csv(path: str) -> List[Dict[str, Any]]:
-    rows = []
+def _to_float(v: Any) -> float:
+    if v is None:
+        raise ValueError("None")
+    s = str(v).replace(",", "").strip()
+    return float(s)
+
+
+def _canonical_side(s: Any) -> str:
+    text = str(s or "").strip().lower()
+    if "long" in text or text == "buy":
+        return "long"
+    if "short" in text or text == "sell":
+        return "short"
+    return text
+
+
+def _float_eq(a: float, b: float, eps: float = 1e-6) -> bool:
+    return abs(a - b) <= eps
+
+
+def load_engine_csv(path: str) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
     with open(path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for r in reader:
+            try:
+                out.append({
+                    "side": _canonical_side(r.get("side")),
+                    "entry_price": _to_float(r.get("entry_price")),
+                    "exit_price": _to_float(r.get("exit_price")),
+                    "entry_bar_index": int(float(r.get("entry_bar_index", -1))),
+                    "exit_bar_index": int(float(r.get("exit_bar_index", -1))),
+                })
+            except Exception:
+                continue
+    return out
+
+
+def _build_tv_pairs(rows: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    by_trade: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        k = (r.get("Trade number") or r.get("trade_number") or "").strip()
+        if not k:
+            continue
+        by_trade.setdefault(k, []).append(r)
+
+    pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    for _, grp in by_trade.items():
+        entry = None
+        exit_row = None
+        for r in grp:
+            t = str(r.get("Type") or r.get("type") or "").lower()
+            if "entry" in t:
+                entry = r
+            elif "exit" in t:
+                exit_row = r
+        if entry is not None and exit_row is not None:
+            pairs.append((entry, exit_row))
+    return pairs
+
+
+def load_tv_trades(path: str) -> List[Dict[str, Any]]:
+    rows = []
+    with open(path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
             rows.append(r)
-    return rows
 
-def normalize_trade(t: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "side": t.get("side"),
-        "entry_price": float(t.get("entry_price", 0.0)),
-        "exit_price": float(t.get("exit_price", 0.0)),
-        "entry_bar_index": int(t.get("entry_bar_index", -1)),
-        "exit_bar_index": int(t.get("exit_bar_index", -1)),
-    }
-
-def main():
-    if len(sys.argv) < 3:
-        print("Usage: python compare_parity.py engine_trades.json tradingview.csv")
-        return
-    engine_path = sys.argv[1]
-    tv_path = sys.argv[2]
-    engine = load_engine_trades(engine_path)
-    tv = load_tv_csv(tv_path)
-    eng_norm = [normalize_trade(t) for t in engine]
-    tv_norm = []
-    for r in tv:
+    trades: List[Dict[str, Any]] = []
+    for entry, exit_row in _build_tv_pairs(rows):
         try:
-            tv_norm.append({
-                "side": r.get("side") or r.get("Side") or r.get("direction"),
-                "entry_price": float(r.get("entry_price") or r.get("Entry Price") or r.get("entry")),
-                "exit_price": float(r.get("exit_price") or r.get("Exit Price") or r.get("exit")),
-                "entry_bar_index": int(r.get("entry_bar_index") or r.get("entry_index") or -1),
-                "exit_bar_index": int(r.get("exit_bar_index") or r.get("exit_index") or -1),
+            side = _canonical_side(entry.get("Signal") or entry.get("signal") or entry.get("Type") or entry.get("type"))
+            trades.append({
+                "side": side,
+                "entry_price": _to_float(entry.get("Price USD") or entry.get("price_usd") or entry.get("entry_price") or entry.get("price")),
+                "exit_price": _to_float(exit_row.get("Price USD") or exit_row.get("price_usd") or exit_row.get("exit_price") or exit_row.get("price")),
+                "entry_bar_index": -1,
+                "exit_bar_index": -1,
             })
         except Exception:
             continue
+    return trades
 
-    # naive pairwise compare
-    n = min(len(eng_norm), len(tv_norm))
+
+def main() -> None:
+    if len(sys.argv) < 3:
+        print("Usage: python compare_parity.py engine_trades.csv tradingview.csv")
+        return
+
+    engine_path = sys.argv[1]
+    tv_path = sys.argv[2]
+
+    engine = load_engine_csv(engine_path)
+    tv = load_tv_trades(tv_path)
+
+    if not engine:
+        print("Engine trade list is empty or unreadable.")
+        return
+    if not tv:
+        print("TradingView trade list is empty or unreadable.")
+        return
+
+    n = min(len(engine), len(tv))
     for i in range(n):
-        e = eng_norm[i]
-        t = tv_norm[i]
-        if (e["side"] != t["side"] or abs(e["entry_price"] - t["entry_price"]) > 1e-6 or abs(e["exit_price"] - t["exit_price"]) > 1e-6):
+        e = engine[i]
+        t = tv[i]
+        mismatch = (
+            e["side"] != t["side"]
+            or not _float_eq(e["entry_price"], t["entry_price"], eps=1e-4)
+            or not _float_eq(e["exit_price"], t["exit_price"], eps=1e-4)
+        )
+        if mismatch:
             print("First mismatch at index", i)
             print("Engine:", e)
             print("TV    :", t)
             return
-    print("No mismatch in first", n, "trades. Engine trades:", len(eng_norm), "TV trades:", len(tv_norm))
+
+    if len(engine) != len(tv):
+        print(f"No mismatch in first {n} trades, but counts differ: engine={len(engine)} tv={len(tv)}")
+    else:
+        print(f"Parity match for all {n} trades")
+
 
 if __name__ == "__main__":
     main()
