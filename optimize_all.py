@@ -38,6 +38,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "grid_constrained": None,
     "grid_expand": None,
+    "grid_fallback": None,
     "parallel_workers": 2,
     "intrabar_paths": ["ohlc"],
     "top_k_per_ticker": 5,
@@ -100,6 +101,7 @@ def merge_with_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
         merged["grid_constrained"] = merged.get("grid") or DEFAULT_CONFIG["grid"]
     if merged.get("grid_expand") is None:
         merged["grid_expand"] = merged.get("grid") or DEFAULT_CONFIG["grid"]
+    # grid_fallback intentionally left as None when not specified — absence means disabled
     return merged
 
 
@@ -233,14 +235,43 @@ def main() -> None:
     constrained_grid = cfg.get("grid_constrained") or cfg.get("grid") or {}
     constrained_results = _run_phase("constrained", gated_tickers, constrained_grid, cfg)
 
+    # Tickers with no constrained candidates get a fallback grid run (if configured)
+    fallback_grid = cfg.get("grid_fallback")
+    fallback_results: List[Dict[str, Any]] = []
+    fallback_symbols: set = set()
+    if fallback_grid:
+        fallback_candidates: List[Dict[str, Any]] = []
+        for r in constrained_results:
+            if not (r.get("top") or []):
+                t_match = next((t for t in gated_tickers if t.get("symbol") == r.get("symbol")), None)
+                if t_match is not None:
+                    fallback_candidates.append(t_match)
+        if fallback_candidates:
+            print(f"No constrained matches for {[t['symbol'] for t in fallback_candidates]}; running fallback grid")
+            fallback_results = _run_phase("fallback", fallback_candidates, fallback_grid, cfg)
+            for r in fallback_results:
+                symbol = r.get("symbol", "")
+                fallback_symbols.add(symbol)
+                top = r.get("top", []) or []
+                top_score = top[0].get("score", "") if top else ""
+                progress_rows.append([symbol, "fallback", "done", r.get("evaluated", 0), round(float(r.get("elapsed_seconds", 0.0)), 2), top_score, r.get("note", "")])
+
     expand_candidates: List[Dict[str, Any]] = []
     for r in constrained_results:
         symbol = r.get("symbol", "")
         top = r.get("top", []) or []
         top_score = top[0].get("score", "") if top else ""
         progress_rows.append([symbol, "constrained", "done", r.get("evaluated", 0), round(float(r.get("elapsed_seconds", 0.0)), 2), top_score, r.get("note", "")])
-        if top:
-            # only expand symbols with at least one constrained candidate
+        # Advance to expand if constrained found candidates; fallback tickers are handled below
+        if top and symbol not in fallback_symbols:
+            t_match = next((t for t in gated_tickers if t.get("symbol") == symbol), None)
+            if t_match is not None:
+                expand_candidates.append(t_match)
+
+    # Tickers that found candidates via fallback also advance to expand
+    for r in fallback_results:
+        symbol = r.get("symbol", "")
+        if r.get("top") or []:
             t_match = next((t for t in gated_tickers if t.get("symbol") == symbol), None)
             if t_match is not None:
                 expand_candidates.append(t_match)
@@ -256,9 +287,11 @@ def main() -> None:
             top_score = top[0].get("score", "") if top else ""
             progress_rows.append([symbol, "expanded", "done", r.get("evaluated", 0), round(float(r.get("elapsed_seconds", 0.0)), 2), top_score, r.get("note", "")])
 
-    # pick final per symbol: prefer expanded if present, otherwise constrained
+    # pick final per symbol: prefer expanded > fallback > constrained
     by_symbol: Dict[str, Dict[str, Any]] = {}
     for r in constrained_results:
+        by_symbol[r.get("symbol", "")] = r
+    for r in fallback_results:
         by_symbol[r.get("symbol", "")] = r
     for r in expanded_results:
         by_symbol[r.get("symbol", "")] = r
