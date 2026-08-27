@@ -66,6 +66,31 @@ grid_expand:
     max: 200
     count: 10
 
+# fallback grid: used when constrained phase finds no suitable matches.
+# Applies relaxed parameter ranges to give difficult tickers a second chance
+# before the engine moves on to the next ticker.
+grid_fallback:
+  stMultiplier:
+    start: 1.0
+    stop: 4.0
+    step: 0.4
+  stPeriod:
+    min: 4
+    max: 24
+    count: 6
+  atrSLmult:
+    start: 0.5
+    stop: 3.0
+    step: 0.5
+  atrTPmult:
+    min: 1.5
+    max: 8.0
+    count: 8
+  emaLen:
+    min: 10
+    max: 200
+    count: 6
+
 search_mode: auto
 n_samples_per_ticker: 5000
 random_seed: 42
