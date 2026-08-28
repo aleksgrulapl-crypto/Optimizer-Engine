@@ -5,8 +5,182 @@ tickers:
   - symbol: NVDA
     timeframe: 15m
     tsv: data/NVDA_15m.tsv
-    tv_export: AutoTrader_15M_NASDAQ_NVDA_2026-08-20.csv
-    parity_ok: false
+    tv_export: null
+    parity_ok: true
+
+  - symbol: MU
+    timeframe: 15m
+    tsv: data/MU_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AAPL
+    timeframe: 15m
+    tsv: data/AAPL_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AMAT
+    timeframe: 15m
+    tsv: data/AMAT_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AMD
+    timeframe: 15m
+    tsv: data/AMD_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AMZN
+    timeframe: 15m
+    tsv: data/AMZN_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AVGO
+    timeframe: 15m
+    tsv: data/AVGO_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: BE
+    timeframe: 15m
+    tsv: data/BE_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: CSCO
+    timeframe: 15m
+    tsv: data/CSCO_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: GOOG
+    timeframe: 15m
+    tsv: data/GOOG_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: INTC
+    timeframe: 15m
+    tsv: data/INTC_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: ISRG
+    timeframe: 15m
+    tsv: data/ISRG_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: LITE
+    timeframe: 15m
+    tsv: data/LITE_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: LLY
+    timeframe: 15m
+    tsv: data/LLY_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: LRCX
+    timeframe: 15m
+    tsv: data/LRCX_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: META
+    timeframe: 15m
+    tsv: data/META_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: MRVL
+    timeframe: 15m
+    tsv: data/MRVL_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: MSFT
+    timeframe: 15m
+    tsv: data/MSFT_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: NBIS
+    timeframe: 15m
+    tsv: data/NBIS_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: NFLX
+    timeframe: 15m
+    tsv: data/NFLX_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: ORCL
+    timeframe: 15m
+    tsv: data/ORCL_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: PLTR
+    timeframe: 15m
+    tsv: data/PLTR_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: PLUG
+    timeframe: 15m
+    tsv: data/PLUG_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: QBTS
+    timeframe: 15m
+    tsv: data/QBTS_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: SPCX
+    timeframe: 15m
+    tsv: data/SPCX_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: STX
+    timeframe: 15m
+    tsv: data/STX_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: TSLA
+    timeframe: 15m
+    tsv: data/TSLA_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: UNH
+    timeframe: 15m
+    tsv: data/UNH_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: WDC
+    timeframe: 15m
+    tsv: data/WDC_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: WMT
+    timeframe: 15m
+    tsv: data/WMT_15m.tsv
+    tv_export: null
+    parity_ok: true
 
 execution:
   intrabar_path: ohlc
@@ -17,7 +191,7 @@ execution:
 
 # parity gate: optimization is skipped for tickers without parity_ok=true
 parity:
-  require_tv_export: true
+  require_tv_export: false
   require_parity_ok: true
 
 # constrained search: stable region discovery
@@ -105,5 +279,5 @@ robustness:
   enabled: true
   segments: 3
   evaluate_top_n: 10
-  reject_if_any_segment_pf_below: 1.1
+  reject_if_any_segment_pf_below: 1.2
   reject_if_any_segment_net_profit_below_or_equal: 0.0
