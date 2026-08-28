@@ -21,9 +21,9 @@ Workflow (required order):
 1) Install dependencies:
    python -m pip install pyyaml pandas pytz
 
-2) Parity export (single ticker, fixed params):
+2) Parity export (single ticker, fixed params, use the same timeframe as tickers.yaml):
    python export_trades.py \
-     --input data/NVDA_15m.tsv \
+     --input data/NVDA_30m.tsv \
      --output optimizer_results/parity_nvda.csv \
      --ticker NVDA \
      --intrabar-path ohlc \
@@ -32,7 +32,7 @@ Workflow (required order):
      --position-size 1.0
 
 3) Compare with TradingView export:
-   python compare_parity.py optimizer_results/parity_nvda.csv AutoTrader_15M_NASDAQ_NVDA_2026-08-20.csv
+   python compare_parity.py optimizer_results/parity_nvda.csv AutoTrader_30M_NASDAQ_NVDA_YYYY-MM-DD.csv
 
 4) If parity is acceptable, set parity_ok: true in /home/runner/work/Optimizer-Engine/Optimizer-Engine/tickers.yaml
 

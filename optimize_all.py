@@ -2,7 +2,7 @@
 Orchestrator with parity gating and phased optimization.
 
 Flow:
-1) Data sanity checks (15m file exists + non-empty candles)
+1) Data sanity checks (timeframe file exists + non-empty candles)
 2) Parity gate checks (tv_export exists and parity_ok=true when enabled)
 3) Constrained optimization
 4) Expanded optimization
@@ -11,6 +11,7 @@ Flow:
 
 import json
 import csv
+import re
 from multiprocessing import Pool
 from pathlib import Path
 from time import time
@@ -120,13 +121,12 @@ def discover_tsvs_auto() -> List[Dict[str, Any]]:
     tickers = []
     if not data_dir.exists():
         return tickers
-    for p in sorted(data_dir.glob("*_15m.tsv")):
+    tf_suffix = re.compile(r"_(\d+[mhd])$", re.IGNORECASE)
+    for p in sorted(data_dir.glob("*.tsv")):
         symbol = p.stem.split("_")[0]
-        tickers.append({"symbol": symbol, "timeframe": "15m", "tsv": str(p), "tv_export": None, "parity_ok": False})
-    if not tickers:
-        for p in sorted(data_dir.glob("*.tsv")):
-            symbol = p.stem.split("_")[0]
-            tickers.append({"symbol": symbol, "timeframe": "15m", "tsv": str(p), "tv_export": None, "parity_ok": False})
+        m = tf_suffix.search(p.stem)
+        timeframe = m.group(1).lower() if m else "15m"
+        tickers.append({"symbol": symbol, "timeframe": timeframe, "tsv": str(p), "tv_export": None, "parity_ok": False})
     return tickers
 
 
@@ -137,9 +137,9 @@ def _sanity_check_ticker(t: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"{symbol}: missing tsv path"
     if not Path(tsv).exists():
         return False, f"{symbol}: missing tsv file {tsv}"
-    tf = str(t.get("timeframe", "15m")).lower()
-    if tf != "15m":
-        return False, f"{symbol}: timeframe must be 15m"
+    tf = str(t.get("timeframe", "15m")).strip().lower()
+    if not re.fullmatch(r"\d+[mhd]", tf):
+        return False, f"{symbol}: invalid timeframe '{tf}' (expected values like 15m or 30m)"
     try:
         candles = load_candles_from_csv(tsv)
     except Exception as e:
