@@ -3,8 +3,20 @@
 
 tickers:
   - symbol: NVDA
+    timeframe: 15m
+    tsv: data/NVDA_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: NVDA
     timeframe: 30m
     tsv: data/NVDA_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: MU
+    timeframe: 15m
+    tsv: data/MU_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -15,8 +27,20 @@ tickers:
     parity_ok: true
 
   - symbol: AAPL
+    timeframe: 15m
+    tsv: data/AAPL_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AAPL
     timeframe: 30m
     tsv: data/AAPL_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AMAT
+    timeframe: 15m
+    tsv: data/AMAT_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -27,8 +51,20 @@ tickers:
     parity_ok: true
 
   - symbol: AMD
+    timeframe: 15m
+    tsv: data/AMD_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AMD
     timeframe: 30m
     tsv: data/AMD_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AMZN
+    timeframe: 15m
+    tsv: data/AMZN_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -39,8 +75,20 @@ tickers:
     parity_ok: true
 
   - symbol: AVGO
+    timeframe: 15m
+    tsv: data/AVGO_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: AVGO
     timeframe: 30m
     tsv: data/AVGO_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: BE
+    timeframe: 15m
+    tsv: data/BE_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -51,8 +99,20 @@ tickers:
     parity_ok: true
 
   - symbol: CSCO
+    timeframe: 15m
+    tsv: data/CSCO_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: CSCO
     timeframe: 30m
     tsv: data/CSCO_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: GOOG
+    timeframe: 15m
+    tsv: data/GOOG_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -63,8 +123,20 @@ tickers:
     parity_ok: true
 
   - symbol: INTC
+    timeframe: 15m
+    tsv: data/INTC_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: INTC
     timeframe: 30m
     tsv: data/INTC_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: ISRG
+    timeframe: 15m
+    tsv: data/ISRG_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -75,8 +147,20 @@ tickers:
     parity_ok: true
 
   - symbol: LITE
+    timeframe: 15m
+    tsv: data/LITE_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: LITE
     timeframe: 30m
     tsv: data/LITE_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: LLY
+    timeframe: 15m
+    tsv: data/LLY_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -87,8 +171,20 @@ tickers:
     parity_ok: true
 
   - symbol: LRCX
+    timeframe: 15m
+    tsv: data/LRCX_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: LRCX
     timeframe: 30m
     tsv: data/LRCX_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: META
+    timeframe: 15m
+    tsv: data/META_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -99,8 +195,20 @@ tickers:
     parity_ok: true
 
   - symbol: MRVL
+    timeframe: 15m
+    tsv: data/MRVL_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: MRVL
     timeframe: 30m
     tsv: data/MRVL_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: MSFT
+    timeframe: 15m
+    tsv: data/MSFT_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -111,8 +219,20 @@ tickers:
     parity_ok: true
 
   - symbol: NBIS
+    timeframe: 15m
+    tsv: data/NBIS_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: NBIS
     timeframe: 30m
     tsv: data/NBIS_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: NFLX
+    timeframe: 15m
+    tsv: data/NFLX_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -123,8 +243,20 @@ tickers:
     parity_ok: true
 
   - symbol: ORCL
+    timeframe: 15m
+    tsv: data/ORCL_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: ORCL
     timeframe: 30m
     tsv: data/ORCL_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: PLTR
+    timeframe: 15m
+    tsv: data/PLTR_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -135,8 +267,20 @@ tickers:
     parity_ok: true
 
   - symbol: PLUG
+    timeframe: 15m
+    tsv: data/PLUG_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: PLUG
     timeframe: 30m
     tsv: data/PLUG_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: QBTS
+    timeframe: 15m
+    tsv: data/QBTS_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -147,8 +291,20 @@ tickers:
     parity_ok: true
 
   - symbol: SPCX
+    timeframe: 15m
+    tsv: data/SPCX_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: SPCX
     timeframe: 30m
     tsv: data/SPCX_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: STX
+    timeframe: 15m
+    tsv: data/STX_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -159,8 +315,20 @@ tickers:
     parity_ok: true
 
   - symbol: TSLA
+    timeframe: 15m
+    tsv: data/TSLA_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: TSLA
     timeframe: 30m
     tsv: data/TSLA_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: UNH
+    timeframe: 15m
+    tsv: data/UNH_15m.tsv
     tv_export: null
     parity_ok: true
 
@@ -171,8 +339,20 @@ tickers:
     parity_ok: true
 
   - symbol: WDC
+    timeframe: 15m
+    tsv: data/WDC_15m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: WDC
     timeframe: 30m
     tsv: data/WDC_30m.tsv
+    tv_export: null
+    parity_ok: true
+
+  - symbol: WMT
+    timeframe: 15m
+    tsv: data/WMT_15m.tsv
     tv_export: null
     parity_ok: true
 
