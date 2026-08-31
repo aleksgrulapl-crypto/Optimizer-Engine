@@ -5,12 +5,13 @@ Run backtest and export trades for TradingView parity checks.
 import csv
 import sys
 import argparse
+import re
 from typing import List, Dict, Any
 from pathlib import Path
 
 from backtest_engine import run_backtest
 from data_loader import load_candles_from_csv
-from presets import get_presets
+from presets import get_presets, normalize_timeframe
 
 
 DEFAULT_FIELDNAMES = [
@@ -60,11 +61,19 @@ def export_trades_csv(trades: List[Dict[str, Any]], out_path: str, fieldnames: L
             writer.writerow(filtered)
 
 
+def _infer_timeframe(path: str) -> str:
+    match = re.search(r"_(\d+[mhd])\.", Path(path).name, re.IGNORECASE)
+    if not match:
+        return "15M"
+    return normalize_timeframe(match.group(1))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run backtest and export trades to CSV.")
     parser.add_argument("--input", "-i", required=True, help="Path to candles CSV/TSV file.")
     parser.add_argument("--output", "-o", default="trades_export.csv", help="Output CSV path.")
     parser.add_argument("--ticker", "-t", default="NVDA", help="Ticker preset to use.")
+    parser.add_argument("--timeframe", default=None, help="Preset timeframe to use (15M or 30M). Defaults to input filename inference.")
     parser.add_argument("--intrabar-path", choices=["ohlc", "olhc"], default="ohlc")
     parser.add_argument("--slippage", type=float, default=0.0)
     parser.add_argument("--commission-pct", type=float, default=0.0)
@@ -86,9 +95,11 @@ def main() -> None:
         print(f"Failed to load candles from {args.input}: {e}", file=sys.stderr)
         sys.exit(2)
 
-    preset = get_presets(args.ticker)
+    timeframe = normalize_timeframe(args.timeframe) if args.timeframe else _infer_timeframe(args.input)
+    preset = get_presets(args.ticker, timeframe)
     params = {
         "ticker": args.ticker,
+        "timeframe": timeframe,
         "intrabar_path": args.intrabar_path,
         "slippage": args.slippage,
         "commission_pct": args.commission_pct,

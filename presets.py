@@ -1,61 +1,56 @@
-def get_presets(ticker: str):
-    emaLenDefault = 200
+from typing import Dict
 
-    stMultiplier = 3.0
-    stPeriod = 10
-    atrSLmult = 1.4
-    atrTPmult = 2.4
-    emaLen = emaLenDefault
 
-    if ticker == "NVDA":
-        stMultiplier = 1.7
-        stPeriod = 8
-        atrSLmult = 1.4
-        atrTPmult = 4.0
-        emaLen = 50
-    elif ticker == "MU":
-        stMultiplier = 2.6
-        stPeriod = 11
-        atrSLmult = 2.3
-        atrTPmult = 2.3
-        emaLen = 185
-    elif ticker == "MSFT":
-        stMultiplier = 4.0
-        stPeriod = 10
-        atrSLmult = 1.6
-        atrTPmult = 2.8
-        emaLen = 250
-    elif ticker == "PLTR":
-        stMultiplier = 3.4
-        stPeriod = 10
-        atrSLmult = 1.4
-        atrTPmult = 3.1
-        emaLen = 160
-    elif ticker == "QBTS":
-        stMultiplier = 1.8
-        stPeriod = 12
-        atrSLmult = 1.6
-        atrTPmult = 3.0
-        emaLen = 180
-    elif ticker in ["AAPL","AMD","META","INTC","TSLA","AMZN","SPCX","NFLX",
-                    "AVGO","GOOG","WDC","MRVL","STX","AMAT","LRCX","ISRG",
-                    "LITE","WMT","CSCO","PLUG"]:
-        stMultiplier = 3.0
-        stPeriod = 10
-        atrSLmult = 1.4
-        atrTPmult = 2.4
-        emaLen = emaLenDefault
-    elif ticker in ["ORCL","UNH","NBIS","BE","LLY"]:
-        stMultiplier = 3.0
-        stPeriod = 10
-        atrSLmult = 1.4
-        atrTPmult = 2.4
-        emaLen = 200
+PRESETS = {
+    "NVDA": ((2.8, 10, 1.4, 4.9, 88), (4.2, 10, 1.4, 4.2, 140)),
+    "MU": ((2.4, 16, 2.3, 7.0, 179), (2.1, 16, 2.0, 2.8, 145)),
+    "MSFT": ((4.0, 10, 1.6, 2.8, 250), (3.8, 12, 2.0, 1.5, 200)),
+    "PLTR": ((3.4, 10, 1.4, 3.1, 160), (2.8, 7, 1.4, 4.0, 64)),
+    "QBTS": ((1.8, 12, 1.6, 3.0, 180), (1.8, 12, 1.6, 3.0, 180)),
+    "AAPL": ((3.0, 8, 2.0, 3.2, 240), (3.0, 10, 1.4, 2.4, 200)),
+    "AMD": ((1.5, 18, 1.1, 2.5, 20), (2.8, 7, 1.8, 5.5, 20)),
+    "META": ((2.6, 4, 1.9, 4.0, 193), (3.4, 16, 3.0, 3.3, 200)),
+    "INTC": ((1.8, 16, 0.8, 2.0, 37), (1.0, 14, 1.6, 4.0, 158)),
+    "TSLA": ((4.2, 16, 1.5, 5.0, 60), (3.4, 20, 3.0, 3.35, 124)),
+    "AMZN": ((2.8, 5, 0.8, 2.0, 120), (2.8, 12, 1.6, 2.0, 80)),
+    "SPCX": ((1.6, 8, 0.8, 2.0, 10), (1.4, 12, 0.8, 4.0, 113)),
+    "NFLX": ((3.0, 10, 1.4, 2.4, 200), (2.8, 14, 1.4, 4.0, 100)),
+    "AVGO": ((2.1, 8, 1.5, 4.0, 120), (2.6, 7, 1.8, 2.0, 40)),
+    "GOOG": ((2.6, 14, 1.5, 4.2, 100), (1.2, 8, 1.0, 3.0, 200)),
+    "WDC": ((1.0, 12, 1.0, 4.5, 10), (1.0, 18, 1.0, 3.0, 200)),
+    "MRVL": ((2.2, 12, 2.0, 5.0, 60), (1.2, 14, 1.8, 3.5, 31)),
+    "STX": ((1.4, 20, 1.6, 7.0, 10), (1.2, 4, 2.0, 1.5, 52)),
+    "AMAT": ((2.6, 14, 1.8, 4.5, 40), (3.0, 10, 1.4, 2.4, 200)),
+    "ORCL": ((2.0, 7, 2.0, 3.5, 120), (2.8, 7, 1.4, 4.0, 64)),
+    "UNH": ((3.0, 10, 1.4, 2.4, 200), (2.6, 5, 0.8, 2.0, 80)),
+    "NBIS": ((2.2, 5, 1.8, 3.0, 120), (1.2, 14, 0.8, 2.5, 31)),
+    "LRCX": ((2.0, 9, 1.8, 4.0, 40), (2.4, 7, 1.2, 3.0, 60)),
+    "ISRG": ((3.0, 10, 1.4, 2.4, 200), (3.8, 24, 2.5, 7.07, 200)),
+    "BE": ((2.6, 12, 0.8, 3.0, 60), (1.2, 16, 0.6, 1.5, 116)),
+    "LITE": ((1.6, 10, 1.0, 2.0, 20), (3.0, 12, 2.1, 8.0, 200)),
+    "LLY": ((2.0, 14, 1.4, 4.0, 60), (2.8, 7, 1.3, 3.5, 60)),
+    "WMT": ((2.6, 5, 1.2, 2.5, 40), (1.6, 12, 1.8, 4.5, 60)),
+    "CSCO": ((2.4, 10, 1.8, 4.0, 120), (3.0, 10, 1.4, 2.4, 200)),
+    "PLUG": ((3.0, 10, 1.4, 2.4, 200), (3.0, 10, 1.4, 2.4, 200)),
+}
 
-    return {
-        "stMultiplier": stMultiplier,
-        "stPeriod": stPeriod,
-        "atrSLmult": atrSLmult,
-        "atrTPmult": atrTPmult,
-        "emaLen": emaLen,
-    }
+
+def normalize_timeframe(timeframe: str = "15M") -> str:
+    normalized = str(timeframe).strip().upper()
+    aliases = {"15M": "15M", "30M": "30M", "15MIN": "15M", "30MIN": "30M"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in {"15M", "30M"}:
+        raise ValueError("timeframe must be '15M' or '30M'")
+    return normalized
+
+
+def get_presets(ticker: str, timeframe: str = "15M") -> Dict[str, float]:
+    ticker = ticker.strip().upper()
+    timeframe = normalize_timeframe(timeframe)
+
+    if ticker not in PRESETS:
+        raise ValueError(f"Unsupported ticker: {ticker}")
+
+    values = PRESETS[ticker][0 if timeframe == "15M" else 1]
+    keys = ("stMultiplier", "stPeriod", "atrSLmult", "atrTPmult", "emaLen")
+    return dict(zip(keys, values))

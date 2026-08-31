@@ -47,9 +47,9 @@ Workflow (required order):
    - --top-k 10
    - --time-budget 2400
 
-   This command seeds from optimizer_results/best_presets.csv for the ticker
-   and runs a focused grid around those parameters. If no aggregate entry exists,
-   it falls back to presets.py defaults.
+   This command runs a focused grid around the timeframe-specific values in
+   presets.py. If both 15m and 30m TSVs are available for the symbol, refinement
+   runs once per timeframe and writes timeframe-specific output files.
 
 Outputs:
 - optimizer_results/best_{SYMBOL}_constrained.csv

@@ -262,7 +262,8 @@ def run_backtest(candles: List[Dict[str, Any]], params: Dict[str, Any]) -> Dict[
     """
     # Load presets if not provided explicitly
     ticker = params.get("ticker", "NVDA")
-    p = get_presets(ticker)
+    timeframe = params.get("timeframe") or "15M"
+    p = get_presets(ticker, timeframe)
 
     stMultiplier = float(params.get("stMultiplier", p.get("stMultiplier", 3.0)))
     stPeriod     = int(params.get("stPeriod", p.get("stPeriod", 12)))
