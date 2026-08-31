@@ -1,14 +1,12 @@
 """
 Single-ticker refinement optimizer.
 
-Use this after optimize_all.py to fine-tune one ticker around its best known params.
+Use this after optimize_all.py to fine-tune one ticker around its presets.py params.
 """
 
 import argparse
-import csv
-import json
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List
 
 from optimize_all import (
     discover_tsvs_auto,
@@ -18,7 +16,7 @@ from optimize_all import (
 )
 from optimize_all import _write_progress_rows as write_progress_rows
 from optimizer_worker import optimize_ticker
-from presets import get_presets
+from presets import get_presets, normalize_timeframe
 
 
 def _safe_float(v: Any, default: float) -> float:
@@ -45,26 +43,6 @@ def _frange(start: float, stop: float, step: float) -> list:
     return out
 
 
-def _load_best_params_from_aggregate(symbol: str, path: Path) -> Optional[Dict[str, Any]]:
-    if not path.exists():
-        return None
-    with path.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if str(row.get("symbol", "")).strip().upper() != symbol.upper():
-                continue
-            raw = row.get("params")
-            if not raw:
-                continue
-            try:
-                params = json.loads(raw)
-                if isinstance(params, dict):
-                    return params
-            except Exception:
-                continue
-    return None
-
-
 def _build_refinement_grid(base: Dict[str, Any]) -> Dict[str, Any]:
     st_mult = _safe_float(base.get("stMultiplier"), 2.0)
     st_period = _safe_int(base.get("stPeriod"), 10)
@@ -81,14 +59,26 @@ def _build_refinement_grid(base: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _find_ticker(cfg: Dict[str, Any], symbol: str) -> Optional[Dict[str, Any]]:
-    tickers = cfg.get("tickers", []) or []
-    if not tickers:
-        tickers = discover_tsvs_auto()
+def _find_tickers(cfg: Dict[str, Any], symbol: str) -> List[Dict[str, Any]]:
+    tickers = list(cfg.get("tickers", []) or [])
+    discovered = discover_tsvs_auto()
+    by_timeframe: Dict[str, Dict[str, Any]] = {}
     for t in tickers:
         if str(t.get("symbol", "")).strip().upper() == symbol.upper():
-            return t
-    return None
+            tf = str(t.get("timeframe", "")).strip().lower()
+            if tf:
+                by_timeframe[tf] = t
+    for t in discovered:
+        if str(t.get("symbol", "")).strip().upper() != symbol.upper():
+            continue
+        tf = str(t.get("timeframe", "")).strip().lower()
+        if tf not in by_timeframe:
+            by_timeframe[tf] = t
+    return [by_timeframe[tf] for tf in sorted(by_timeframe.keys())]
+
+
+def _phase_with_timeframe(phase: str, timeframe: str) -> str:
+    return f"{phase}_{timeframe.lower()}"
 
 
 def main() -> None:
@@ -116,67 +106,68 @@ def main() -> None:
     args = parser.parse_args()
 
     symbol = args.symbol.strip().upper()
+    base_phase = args.phase.strip() or "refine"
     cfg = load_config()
-    ticker_cfg = _find_ticker(cfg, symbol)
-    if not ticker_cfg:
+    ticker_cfgs = _find_tickers(cfg, symbol)
+    if not ticker_cfgs:
         print(f"{symbol}: not found in tickers config or auto-discovered TSVs.")
         return
 
-    ok, note = _sanity_check_ticker(ticker_cfg)
-    if not ok:
-        print(note)
-        return
-    p_ok, p_note = _parity_gate_pass(ticker_cfg, cfg.get("parity", {}) or {})
-    if not p_ok:
-        print(p_note)
-        return
-
-    aggregate = Path("optimizer_results") / "best_presets.csv"
-    best_params = _load_best_params_from_aggregate(symbol, aggregate)
-    if not best_params:
-        best_params = get_presets(symbol)
-        print(f"{symbol}: best_presets.csv entry not found, using presets.py defaults.")
-    else:
-        print(f"{symbol}: using best params from optimizer_results/best_presets.csv")
-
-    grid = _build_refinement_grid(best_params)
+    parity_cfg = cfg.get("parity", {}) or {}
     top_k = int(args.top_k) if args.top_k is not None else int(cfg.get("top_k_per_ticker", 5))
     time_budget = int(args.time_budget) if args.time_budget is not None else int(cfg.get("time_budget_seconds_per_ticker", 1800))
-
-    result = optimize_ticker(
-        ticker_cfg,
-        grid,
-        [str((cfg.get("execution", {}) or {}).get("intrabar_path", "ohlc"))],
-        top_k=top_k,
-        time_budget=time_budget,
-        search_mode=str(cfg.get("search_mode", "auto")),
-        n_samples=int(cfg.get("n_samples_per_ticker", cfg.get("n_samples", 1000))),
-        seed=int(cfg.get("random_seed", 0)),
-        max_exhaustive=int(cfg.get("max_exhaustive", 150000)),
-        execution=(cfg.get("execution", {}) or {}),
-        robustness=(cfg.get("robustness", {}) or {}),
-        phase=args.phase.strip() or "refine",
-    )
-
     progress_path = Path("optimizer_results") / "progress_single.csv"
-    top = result.get("top", []) or []
-    top_score = top[0].get("score", "") if top else ""
-    write_progress_rows(
-        progress_path,
-        [[
+    progress_rows = []
+
+    for ticker_cfg in ticker_cfgs:
+        ok, note = _sanity_check_ticker(ticker_cfg)
+        if not ok:
+            print(note)
+            progress_rows.append([symbol, _phase_with_timeframe(base_phase, str(ticker_cfg.get("timeframe", "15m"))), "skipped", 0, 0, "", note])
+            continue
+        p_ok, p_note = _parity_gate_pass(ticker_cfg, parity_cfg)
+        if not p_ok:
+            print(p_note)
+            progress_rows.append([symbol, _phase_with_timeframe(base_phase, str(ticker_cfg.get("timeframe", "15m"))), "skipped", 0, 0, "", p_note])
+            continue
+
+        timeframe = normalize_timeframe(str(ticker_cfg.get("timeframe", "15m")))
+        best_params = get_presets(symbol, timeframe)
+        print(f"{symbol}: using presets.py defaults for {timeframe}")
+        grid = _build_refinement_grid(best_params)
+        phase = _phase_with_timeframe(base_phase, timeframe)
+
+        result = optimize_ticker(
+            ticker_cfg,
+            grid,
+            [str((cfg.get("execution", {}) or {}).get("intrabar_path", "ohlc"))],
+            top_k=top_k,
+            time_budget=time_budget,
+            search_mode=str(cfg.get("search_mode", "auto")),
+            n_samples=int(cfg.get("n_samples_per_ticker", cfg.get("n_samples", 1000))),
+            seed=int(cfg.get("random_seed", 0)),
+            max_exhaustive=int(cfg.get("max_exhaustive", 150000)),
+            execution=(cfg.get("execution", {}) or {}),
+            robustness=(cfg.get("robustness", {}) or {}),
+            phase=phase,
+        )
+
+        top = result.get("top", []) or []
+        top_score = top[0].get("score", "") if top else ""
+        progress_rows.append([
             symbol,
-            result.get("phase", "refine"),
+            result.get("phase", phase),
             "done",
             result.get("evaluated", 0),
             round(float(result.get("elapsed_seconds", 0.0)), 2),
             top_score,
             result.get("note", ""),
-        ]],
-    )
+        ])
+        print(f"Single-ticker refinement complete for {symbol} {timeframe}.")
+        print(f"CSV: {result.get('csv')}")
+        print(f"Report: {result.get('report')}")
 
-    print(f"Single-ticker refinement complete for {symbol}.")
-    print(f"CSV: {result.get('csv')}")
-    print(f"Report: {result.get('report')}")
+    write_progress_rows(progress_path, progress_rows)
     print(f"Progress: {progress_path}")
 
 

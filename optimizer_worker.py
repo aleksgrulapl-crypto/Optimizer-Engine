@@ -352,6 +352,7 @@ def optimize_ticker(cfg: Dict[str, Any],
                     phase: str = "constrained") -> Dict[str, Any]:
     symbol = cfg.get("symbol")
     tsv = cfg.get("tsv")
+    timeframe = cfg.get("timeframe")
     start_time = time.time()
 
     execution = execution or {}
@@ -384,6 +385,7 @@ def optimize_ticker(cfg: Dict[str, Any],
             run_params = dict(params)
             run_params.update({
                 "ticker": symbol,
+                "timeframe": timeframe,
                 "intrabar_path": path,
                 "position_size": position_size,
                 "slippage": slippage,
