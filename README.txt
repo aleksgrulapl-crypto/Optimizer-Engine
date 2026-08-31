@@ -39,6 +39,18 @@ Workflow (required order):
 5) Run phased optimization:
    python optimize_all.py
 
+6) Refine a single ticker after optimize_all:
+   python optimize_single.py --symbol NVDA
+
+   Optional overrides:
+   - --phase refine_nvda
+   - --top-k 10
+   - --time-budget 2400
+
+   This command seeds from optimizer_results/best_presets.csv for the ticker
+   and runs a focused grid around those parameters. If no aggregate entry exists,
+   it falls back to presets.py defaults.
+
 Outputs:
 - optimizer_results/best_{SYMBOL}_constrained.csv
 - optimizer_results/best_{SYMBOL}_expanded.csv
@@ -46,3 +58,6 @@ Outputs:
 - optimizer_results/report_{SYMBOL}_expanded.json
 - optimizer_results/best_presets.csv
 - optimizer_results/progress.csv
+- optimizer_results/best_{SYMBOL}_refine.csv
+- optimizer_results/report_{SYMBOL}_refine.json
+- optimizer_results/progress_single.csv
