@@ -13,10 +13,18 @@ Core files in this repository:
 Workflow (required order):
 1) Data sanity check
 2) Parity check
-3) Constrained optimize
-4) Expand optimize
-5) Robustness check
-6) Finalize presets
+3) Staged search per ticker and timeframe (15m and 30m):
+   a. Initial random grid search over the base grid (grid_constrained)
+   b. Expanded grid around the best suitable candidate from the initial stage
+   c. Refined grid around the top candidate from the expanded stage
+4) Robustness check
+5) Finalize presets
+
+Candidate suitability filters (configurable via the staged_search block in
+tickers.yaml): win rate >= 50%, profit factor >= 1.2, strictly positive net
+profit, and a minimum trade count. Candidates are ranked by score, preferring
+lower drawdown on ties. Set staged_search.enabled: false to fall back to the
+legacy constrained/fallback/expanded phases.
 
 1) Install dependencies:
    python -m pip install pyyaml pandas pytz
@@ -36,7 +44,7 @@ Workflow (required order):
 
 4) If parity is acceptable, set parity_ok: true in /home/runner/work/Optimizer-Engine/Optimizer-Engine/tickers.yaml
 
-5) Run phased optimization:
+5) Run staged optimization (per ticker entry, i.e. each ticker at 15m and 30m):
    python optimize_all.py
 
 6) Refine a single ticker after optimize_all:
@@ -52,12 +60,17 @@ Workflow (required order):
    runs once per timeframe and writes timeframe-specific output files.
 
 Outputs:
-- optimizer_results/best_{SYMBOL}_constrained.csv
+- optimizer_results/best_{SYMBOL}_initial.csv
 - optimizer_results/best_{SYMBOL}_expanded.csv
-- optimizer_results/report_{SYMBOL}_constrained.json
+- optimizer_results/best_{SYMBOL}_refined.csv
+- optimizer_results/report_{SYMBOL}_initial.json
 - optimizer_results/report_{SYMBOL}_expanded.json
+- optimizer_results/report_{SYMBOL}_refined.json
 - optimizer_results/best_presets.csv
 - optimizer_results/progress.csv
-- optimizer_results/best_{SYMBOL}_refine.csv
-- optimizer_results/report_{SYMBOL}_refine.json
-- optimizer_results/progress_single.csv
+- optimizer_results/best_{SYMBOL}_refine.csv        (optimize_single.py)
+- optimizer_results/report_{SYMBOL}_refine.json     (optimize_single.py)
+- optimizer_results/progress_single.csv             (optimize_single.py)
+
+Tests:
+   python -m unittest discover -s tests -v

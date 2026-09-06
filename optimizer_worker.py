@@ -302,6 +302,15 @@ def build_neighborhood_grid(grid: Dict[str, Any], center: Dict[str, Any], radius
             offsets = [i * step for i in range(-n_steps, n_steps + 1)]
             values = _unique_sorted([round(f_center + o, 10) for o in offsets])
 
+        # Keep values within the base grid's range so neighborhoods stay valid.
+        if len(uniq) >= 2:
+            lo, hi = float(uniq[0]), float(uniq[-1])
+            values = [v for v in values if lo - 1e-9 <= float(v) <= hi + 1e-9]
+            if f_center < lo or f_center > hi:
+                nearest = min(uniq, key=lambda v: abs(float(v) - f_center))
+                values = list(values) + [nearest]
+            values = _unique_sorted(values)
+
         neighborhood[key] = values if values else _dedup_keep_order([center_value] + list(base_values))
     return neighborhood
 
@@ -313,16 +322,26 @@ def _param_key(params: Dict[str, Any]) -> str:
     return json.dumps({k: params[k] for k in sorted(params.keys())}, sort_keys=True, separators=(",", ":"))
 
 
-def _append_completed_run(symbol: str, phase: str, record: Dict[str, Any]) -> None:
+def _run_label(symbol: str, timeframe: Any = None) -> str:
+    """File/tracking label for a run; includes the timeframe when available so
+    15m and 30m runs for the same symbol do not overwrite each other."""
+    label = str(symbol)
+    tf = str(timeframe or "").strip().lower()
+    if tf:
+        label = f"{label}_{tf}"
+    return label
+
+
+def _append_completed_run(label: str, phase: str, record: Dict[str, Any]) -> None:
     out_dir = Path("completed_runs")
     out_dir.mkdir(exist_ok=True)
-    path = out_dir / f"{symbol}_{phase}.jsonl"
+    path = out_dir / f"{label}_{phase}.jsonl"
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
 
-def _load_completed_keys(symbol: str, phase: str) -> set:
-    path = Path("completed_runs") / f"{symbol}_{phase}.jsonl"
+def _load_completed_keys(label: str, phase: str) -> set:
+    path = Path("completed_runs") / f"{label}_{phase}.jsonl"
     if not path.exists():
         return set()
     keys = set()
@@ -338,10 +357,10 @@ def _load_completed_keys(symbol: str, phase: str) -> set:
     return keys
 
 
-def _write_best_csv(symbol: str, top: List[Dict[str, Any]], phase: str) -> str:
+def _write_best_csv(label: str, top: List[Dict[str, Any]], phase: str) -> str:
     out_dir = Path("optimizer_results")
     out_dir.mkdir(exist_ok=True)
-    csv_path = out_dir / f"best_{symbol}_{phase}.csv"
+    csv_path = out_dir / f"best_{label}_{phase}.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -362,14 +381,15 @@ def _write_best_csv(symbol: str, top: List[Dict[str, Any]], phase: str) -> str:
     return str(csv_path)
 
 
-def _write_report(symbol: str, top: List[Dict[str, Any]], phase: str, note: str) -> str:
+def _write_report(label: str, top: List[Dict[str, Any]], phase: str, note: str, symbol: str = None, timeframe: Any = None) -> str:
     out_dir = Path("optimizer_results")
     out_dir.mkdir(exist_ok=True)
-    report_path = out_dir / f"report_{symbol}_{phase}.json"
+    report_path = out_dir / f"report_{label}_{phase}.json"
     if top:
         best = top[0]
         r = {
-            "symbol": symbol,
+            "symbol": symbol if symbol is not None else label,
+            "timeframe": timeframe,
             "phase": phase,
             "note": note,
             "best_params": best["params"],
@@ -379,7 +399,7 @@ def _write_report(symbol: str, top: List[Dict[str, Any]], phase: str, note: str)
         }
         report_path.write_text(json.dumps(r, indent=2))
     else:
-        report_path.write_text(json.dumps({"symbol": symbol, "phase": phase, "note": note, "error": "no valid candidates"}, indent=2))
+        report_path.write_text(json.dumps({"symbol": symbol if symbol is not None else label, "timeframe": timeframe, "phase": phase, "note": note, "error": "no valid candidates"}, indent=2))
     return str(report_path)
 
 
@@ -465,6 +485,7 @@ def optimize_ticker(cfg: Dict[str, Any],
     symbol = cfg.get("symbol")
     tsv = cfg.get("tsv")
     timeframe = cfg.get("timeframe")
+    label = _run_label(symbol, timeframe)
     start_time = time.time()
 
     execution = execution or {}
@@ -472,7 +493,7 @@ def optimize_ticker(cfg: Dict[str, Any],
     filters = {**DEFAULT_FILTERS, **(filters or {})}
 
     candles = load_candles_from_csv(tsv)
-    completed_keys = _load_completed_keys(symbol, phase)
+    completed_keys = _load_completed_keys(label, phase)
 
     best_candidates: List[Dict[str, Any]] = []
     evaluated = 0
@@ -508,7 +529,7 @@ def optimize_ticker(cfg: Dict[str, Any],
 
             key = _param_key(run_params)
 
-            print(f"[{symbol}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated} | best_score={best_score_so_far:.2f}" if best_score_so_far != float('-inf') else f"[{symbol}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated}", flush=True)
+            print(f"[{label}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated} | best_score={best_score_so_far:.2f}" if best_score_so_far != float('-inf') else f"[{label}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated}", flush=True)
 
             if key in completed_keys:
                 continue
@@ -531,7 +552,7 @@ def optimize_ticker(cfg: Dict[str, Any],
                     "score": None,
                     "status": "rejected"
                 }
-                _append_completed_run(symbol, phase, rec)
+                _append_completed_run(label, phase, rec)
                 completed_keys.add(key)
                 evaluated += 1
                 continue
@@ -543,7 +564,7 @@ def optimize_ticker(cfg: Dict[str, Any],
             if score > best_score_so_far:
                 best_score_so_far = score
                 print(
-                    f"\n*** [{symbol}][{phase}] NEW BEST FOUND ***\n"
+                    f"\n*** [{label}][{phase}] NEW BEST FOUND ***\n"
                     f"    Score:         {score:.4f}\n"
                     f"    Profit Factor: {pf:.4f}\n"
                     f"    Net Profit:    {net:.4f}\n"
@@ -562,7 +583,7 @@ def optimize_ticker(cfg: Dict[str, Any],
                 "score": score,
                 "status": "accepted"
             }
-            _append_completed_run(symbol, phase, rec)
+            _append_completed_run(label, phase, rec)
             completed_keys.add(key)
             evaluated += 1
 
@@ -580,8 +601,8 @@ def optimize_ticker(cfg: Dict[str, Any],
 
     top = best_candidates[:top_k]
 
-    csv_path = _write_best_csv(symbol, top, phase)
-    report_path = _write_report(symbol, top, phase, robust_note)
+    csv_path = _write_best_csv(label, top, phase)
+    report_path = _write_report(label, top, phase, robust_note, symbol=symbol, timeframe=timeframe)
 
     elapsed = time.time() - start_time
     return {
