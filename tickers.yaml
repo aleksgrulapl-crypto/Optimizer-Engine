@@ -1,5 +1,9 @@
 # backtesting configuration
-# Workflow: data sanity -> parity check -> constrained optimize -> expand optimize -> robustness validation
+# Workflow: data sanity -> parity check -> staged search per ticker/timeframe -> robustness validation
+# Staged search runs for every ticker entry below (each ticker at 15m and 30m):
+#   1) initial  - random samples of the base grid (grid_constrained)
+#   2) expanded - grid expanded around the best suitable candidate from stage 1
+#   3) refined  - narrower grid around the top candidate from the expanded stage
 
 tickers:
   - symbol: NVDA
@@ -453,6 +457,22 @@ max_exhaustive: 500000
 parallel_workers: 2
 top_k_per_ticker: 5
 time_budget_seconds_per_ticker: 1800
+
+# staged search: initial random grid -> expanded grid around the best suitable
+# candidate -> refined grid around the top expanded candidate.
+# A candidate is suitable when it passes all filters; candidates are ranked by
+# score, preferring lower drawdown on ties. Set enabled: false to fall back to
+# the legacy constrained/fallback/expanded phases.
+staged_search:
+  enabled: true
+  filters:
+    min_win_rate: 0.50        # at least 50% win rate
+    min_profit_factor: 1.2    # profit factor of at least 1.2
+    min_net_profit: 0.0       # strictly positive net profit
+    min_trades: 10
+  expand_radius: 2.0          # expanded stage spans +/- radius grid steps per parameter
+  refine_radius: 1.0          # refined stage spans +/- radius grid steps per parameter
+  time_budget_split: [0.5, 0.3, 0.2]  # share of the per-ticker budget per stage
 
 # optional post-optimization stability check on top candidates
 robustness:

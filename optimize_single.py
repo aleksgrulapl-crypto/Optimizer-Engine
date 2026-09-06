@@ -135,7 +135,8 @@ def main() -> None:
         best_params = get_presets(symbol, timeframe)
         print(f"{symbol}: using presets.py defaults for {timeframe}")
         grid = _build_refinement_grid(best_params)
-        phase = _phase_with_timeframe(base_phase, timeframe)
+        # The worker namespaces outputs per timeframe, so the phase stays bare.
+        phase = base_phase
 
         result = optimize_ticker(
             ticker_cfg,

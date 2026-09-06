@@ -1,5 +1,6 @@
 """
-Worker with candidate tracking, resume, phased runs, and robustness filtering.
+Worker with candidate tracking, resume, phased runs, robustness filtering, and
+per-ticker staged search (initial random -> expanded -> refined grids).
 """
 
 import time
@@ -12,6 +13,25 @@ from typing import Dict, Any, List, Iterator, Tuple
 
 from data_loader import load_candles_from_csv
 from backtest_engine import run_backtest
+
+# Default acceptance filters for a candidate to be considered suitable:
+# win rate >= 50%, profit factor >= 1.2, strictly positive net profit.
+DEFAULT_FILTERS: Dict[str, Any] = {
+    "min_win_rate": 0.50,
+    "min_profit_factor": 1.2,
+    "min_net_profit": 0.0,
+    "min_trades": 10,
+}
+
+# Fallback step sizes per parameter when the base grid does not define one
+# (single-valued specs): (float step, integer step).
+NEIGHBORHOOD_STEPS: Dict[str, Tuple[float, int]] = {
+    "stMultiplier": (0.1, 0),
+    "stPeriod": (0.0, 1),
+    "atrSLmult": (0.1, 0),
+    "atrTPmult": (0.2, 0),
+    "emaLen": (0.0, 5),
+}
 
 
 # -------------------------
@@ -195,6 +215,106 @@ def score_candidate(metrics: Dict[str, Any]) -> float:
     return pf_component + profit_component + win_component - drawdown_penalty - low_sample_penalty
 
 
+def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
+    """Suitability check: win rate, profit factor, net profit and trade count floors."""
+    pf = float(metrics.get("profit_factor", 0.0))
+    net = float(metrics.get("net_profit", 0.0))
+    wr = float(metrics.get("win_rate", 0.0))
+    tc = int(metrics.get("trade_count", 0))
+    if net <= float(filters.get("min_net_profit", 0.0)):
+        return False
+    if pf < float(filters.get("min_profit_factor", 1.2)):
+        return False
+    if wr < float(filters.get("min_win_rate", 0.50)):
+        return False
+    if tc < int(filters.get("min_trades", 10)):
+        return False
+    return True
+
+
+def _candidate_rank_key(candidate: Dict[str, Any]) -> Tuple[float, float]:
+    """Rank by score first; on ties prefer the lower max drawdown."""
+    m = candidate.get("metrics", {}) or {}
+    return (float(candidate.get("score", 0.0)), -float(m.get("max_drawdown", float("inf"))))
+
+
+def _sort_candidates(candidates: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
+    candidates.sort(key=_candidate_rank_key, reverse=True)
+    return candidates[:max(20, top_k)]
+
+
+def _unique_sorted(values: List[Any]) -> List[Any]:
+    out = []
+    for v in values:
+        if v not in out:
+            out.append(v)
+    out.sort()
+    return out
+
+
+def _dedup_keep_order(values: List[Any]) -> List[Any]:
+    out = []
+    for v in values:
+        if v not in out:
+            out.append(v)
+    return out
+
+
+def build_neighborhood_grid(grid: Dict[str, Any], center: Dict[str, Any], radius: float) -> Dict[str, Any]:
+    """Build a grid centered on ``center`` params around a promising candidate.
+
+    Integer parameters (e.g. stPeriod, emaLen): ``radius`` is a count of grid
+    steps taken in each direction. Float parameters: ``radius`` is the distance
+    covered in each direction, keeping the base grid's step (never coarser than
+    the base grid). Step sizes are inferred from the base grid, falling back to
+    ``NEIGHBORHOOD_STEPS`` for single-valued specs.
+    """
+    neighborhood: Dict[str, Any] = {}
+    for key, spec in grid.items():
+        base_values = _expand_spec(spec)
+        center_value = center.get(key, base_values[0] if base_values else None)
+        try:
+            f_center = float(center_value)
+        except (TypeError, ValueError):
+            neighborhood[key] = _dedup_keep_order([center_value] + list(base_values))
+            continue
+
+        uniq = _unique_sorted(base_values)
+        is_int = bool(uniq) and all(isinstance(v, int) and not isinstance(v, bool) for v in uniq)
+        if len(uniq) >= 2:
+            base_step = round(min(float(uniq[i + 1]) - float(uniq[i]) for i in range(len(uniq) - 1)), 10)
+        else:
+            base_step = 0.0
+
+        if is_int:
+            step = max(1.0, base_step or float(NEIGHBORHOOD_STEPS.get(key, (0.1, 1))[1]))
+            n_steps = max(0, int(round(float(radius))))
+            offsets = [i * step for i in range(-n_steps, n_steps + 1)]
+            values = _unique_sorted([int(round(f_center + o)) for o in offsets])
+        else:
+            r = abs(float(radius))
+            if base_step > 0.0:
+                n_steps = max(1, int(round(r / base_step))) if r > 0.0 else 0
+                step = min(base_step, r / n_steps) if r > 0.0 else base_step
+            else:
+                step = float(NEIGHBORHOOD_STEPS.get(key, (0.1, 1))[0])
+                n_steps = max(0, int(round(r / step))) if step > 0.0 else 0
+            offsets = [i * step for i in range(-n_steps, n_steps + 1)]
+            values = _unique_sorted([round(f_center + o, 10) for o in offsets])
+
+        # Keep values within the base grid's range so neighborhoods stay valid.
+        if len(uniq) >= 2:
+            lo, hi = float(uniq[0]), float(uniq[-1])
+            values = [v for v in values if lo - 1e-9 <= float(v) <= hi + 1e-9]
+            if f_center < lo or f_center > hi:
+                nearest = min(uniq, key=lambda v: abs(float(v) - f_center))
+                values = list(values) + [nearest]
+            values = _unique_sorted(values)
+
+        neighborhood[key] = values if values else _dedup_keep_order([center_value] + list(base_values))
+    return neighborhood
+
+
 # -------------------------
 # Tracking helpers
 # -------------------------
@@ -202,16 +322,26 @@ def _param_key(params: Dict[str, Any]) -> str:
     return json.dumps({k: params[k] for k in sorted(params.keys())}, sort_keys=True, separators=(",", ":"))
 
 
-def _append_completed_run(symbol: str, phase: str, record: Dict[str, Any]) -> None:
+def _run_label(symbol: str, timeframe: Any = None) -> str:
+    """File/tracking label for a run; includes the timeframe when available so
+    15m and 30m runs for the same symbol do not overwrite each other."""
+    label = str(symbol)
+    tf = str(timeframe or "").strip().lower()
+    if tf:
+        label = f"{label}_{tf}"
+    return label
+
+
+def _append_completed_run(label: str, phase: str, record: Dict[str, Any]) -> None:
     out_dir = Path("completed_runs")
     out_dir.mkdir(exist_ok=True)
-    path = out_dir / f"{symbol}_{phase}.jsonl"
+    path = out_dir / f"{label}_{phase}.jsonl"
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
 
-def _load_completed_keys(symbol: str, phase: str) -> set:
-    path = Path("completed_runs") / f"{symbol}_{phase}.jsonl"
+def _load_completed_keys(label: str, phase: str) -> set:
+    path = Path("completed_runs") / f"{label}_{phase}.jsonl"
     if not path.exists():
         return set()
     keys = set()
@@ -227,10 +357,10 @@ def _load_completed_keys(symbol: str, phase: str) -> set:
     return keys
 
 
-def _write_best_csv(symbol: str, top: List[Dict[str, Any]], phase: str) -> str:
+def _write_best_csv(label: str, top: List[Dict[str, Any]], phase: str) -> str:
     out_dir = Path("optimizer_results")
     out_dir.mkdir(exist_ok=True)
-    csv_path = out_dir / f"best_{symbol}_{phase}.csv"
+    csv_path = out_dir / f"best_{label}_{phase}.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -251,14 +381,15 @@ def _write_best_csv(symbol: str, top: List[Dict[str, Any]], phase: str) -> str:
     return str(csv_path)
 
 
-def _write_report(symbol: str, top: List[Dict[str, Any]], phase: str, note: str) -> str:
+def _write_report(label: str, top: List[Dict[str, Any]], phase: str, note: str, symbol: str = None, timeframe: Any = None) -> str:
     out_dir = Path("optimizer_results")
     out_dir.mkdir(exist_ok=True)
-    report_path = out_dir / f"report_{symbol}_{phase}.json"
+    report_path = out_dir / f"report_{label}_{phase}.json"
     if top:
         best = top[0]
         r = {
-            "symbol": symbol,
+            "symbol": symbol if symbol is not None else label,
+            "timeframe": timeframe,
             "phase": phase,
             "note": note,
             "best_params": best["params"],
@@ -268,7 +399,7 @@ def _write_report(symbol: str, top: List[Dict[str, Any]], phase: str, note: str)
         }
         report_path.write_text(json.dumps(r, indent=2))
     else:
-        report_path.write_text(json.dumps({"symbol": symbol, "phase": phase, "note": note, "error": "no valid candidates"}, indent=2))
+        report_path.write_text(json.dumps({"symbol": symbol if symbol is not None else label, "timeframe": timeframe, "phase": phase, "note": note, "error": "no valid candidates"}, indent=2))
     return str(report_path)
 
 
@@ -329,7 +460,7 @@ def _robustness_filter(
         survivors.append(c2)
 
     if survivors:
-        survivors.sort(key=lambda x: x["score"], reverse=True)
+        survivors.sort(key=_candidate_rank_key, reverse=True)
         return survivors + candidates[evaluate_top_n:], f"robustness kept {len(survivors)}/{len(checked)} checked candidates"
 
     return candidates, "robustness rejected all checked candidates; fallback to unfiltered ranking"
@@ -349,17 +480,20 @@ def optimize_ticker(cfg: Dict[str, Any],
                     max_exhaustive: int = 200000,
                     execution: Dict[str, Any] = None,
                     robustness: Dict[str, Any] = None,
-                    phase: str = "constrained") -> Dict[str, Any]:
+                    phase: str = "constrained",
+                    filters: Dict[str, Any] = None) -> Dict[str, Any]:
     symbol = cfg.get("symbol")
     tsv = cfg.get("tsv")
     timeframe = cfg.get("timeframe")
+    label = _run_label(symbol, timeframe)
     start_time = time.time()
 
     execution = execution or {}
     robustness = robustness or {}
+    filters = {**DEFAULT_FILTERS, **(filters or {})}
 
     candles = load_candles_from_csv(tsv)
-    completed_keys = _load_completed_keys(symbol, phase)
+    completed_keys = _load_completed_keys(label, phase)
 
     best_candidates: List[Dict[str, Any]] = []
     evaluated = 0
@@ -395,7 +529,7 @@ def optimize_ticker(cfg: Dict[str, Any],
 
             key = _param_key(run_params)
 
-            print(f"[{symbol}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated} | best_score={best_score_so_far:.2f}" if best_score_so_far != float('-inf') else f"[{symbol}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated}", flush=True)
+            print(f"[{label}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated} | best_score={best_score_so_far:.2f}" if best_score_so_far != float('-inf') else f"[{label}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated}", flush=True)
 
             if key in completed_keys:
                 continue
@@ -403,13 +537,13 @@ def optimize_ticker(cfg: Dict[str, Any],
             res = run_backtest(candles, run_params)
             metrics = compute_metrics_from_run(res)
 
-            # Hard filters: net profit > 0, PF >= 1.3, win rate >= 30%, at least 10 trades
+            # Hard filters (defaults: net profit > 0, PF >= 1.2, win rate >= 50%, at least 10 trades)
             pf = float(metrics.get("profit_factor", 0.0))
             net = float(metrics.get("net_profit", 0.0))
             wr = float(metrics.get("win_rate", 0.0))
             tc = int(metrics.get("trade_count", 0))
 
-            if net <= 0.0 or pf < 1.3 or wr < 0.30 or tc < 10:
+            if not passes_filters(metrics, filters):
                 rec = {
                     "timestamp": time.time(),
                     "_param_key": key,
@@ -418,7 +552,7 @@ def optimize_ticker(cfg: Dict[str, Any],
                     "score": None,
                     "status": "rejected"
                 }
-                _append_completed_run(symbol, phase, rec)
+                _append_completed_run(label, phase, rec)
                 completed_keys.add(key)
                 evaluated += 1
                 continue
@@ -430,7 +564,7 @@ def optimize_ticker(cfg: Dict[str, Any],
             if score > best_score_so_far:
                 best_score_so_far = score
                 print(
-                    f"\n*** [{symbol}][{phase}] NEW BEST FOUND ***\n"
+                    f"\n*** [{label}][{phase}] NEW BEST FOUND ***\n"
                     f"    Score:         {score:.4f}\n"
                     f"    Profit Factor: {pf:.4f}\n"
                     f"    Net Profit:    {net:.4f}\n"
@@ -449,31 +583,31 @@ def optimize_ticker(cfg: Dict[str, Any],
                 "score": score,
                 "status": "accepted"
             }
-            _append_completed_run(symbol, phase, rec)
+            _append_completed_run(label, phase, rec)
             completed_keys.add(key)
             evaluated += 1
 
-            best_candidates.sort(key=lambda x: x["score"], reverse=True)
-            best_candidates = best_candidates[:max(20, top_k)]
+            best_candidates = _sort_candidates(best_candidates, top_k)
 
             if time.time() - start_time > time_budget:
                 break
 
-    best_candidates.sort(key=lambda x: x["score"], reverse=True)
+    _sort_candidates(best_candidates, top_k)
 
     robust_note = "robustness not run"
     if best_candidates:
         best_candidates, robust_note = _robustness_filter(candles, best_candidates, robustness)
-        best_candidates.sort(key=lambda x: x["score"], reverse=True)
+        _sort_candidates(best_candidates, top_k)
 
     top = best_candidates[:top_k]
 
-    csv_path = _write_best_csv(symbol, top, phase)
-    report_path = _write_report(symbol, top, phase, robust_note)
+    csv_path = _write_best_csv(label, top, phase)
+    report_path = _write_report(label, top, phase, robust_note, symbol=symbol, timeframe=timeframe)
 
     elapsed = time.time() - start_time
     return {
         "symbol": symbol,
+        "timeframe": timeframe,
         "phase": phase,
         "top": top,
         "csv": csv_path,
@@ -482,3 +616,79 @@ def optimize_ticker(cfg: Dict[str, Any],
         "elapsed_seconds": elapsed,
         "note": robust_note,
     }
+
+
+# -------------------------
+# Staged search
+# -------------------------
+def staged_search(ticker: Dict[str, Any],
+                  grid: Dict[str, Any],
+                  intrabar_paths: List[str],
+                  top_k: int = 5,
+                  time_budget: int = 1800,
+                  n_samples: int = 1000,
+                  seed: int = 0,
+                  max_exhaustive: int = 200000,
+                  execution: Dict[str, Any] = None,
+                  robustness: Dict[str, Any] = None,
+                  staged_cfg: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    """Run the staged search strategy for a single ticker/timeframe entry.
+
+    Stage order:
+      1) initial   - random sampling of the base grid
+      2) expanded  - grid expanded around the best suitable initial candidate
+      3) refined   - narrower grid around the best candidate from the expanded stage
+
+    Candidates must satisfy the configured filters (win rate, profit factor,
+    net profit, trade count); ranking prefers lower drawdown on score ties.
+    Later stages are skipped when no suitable candidate is found.
+    """
+    staged_cfg = staged_cfg or {}
+    filters = staged_cfg.get("filters", None) or None
+    expand_radius = float(staged_cfg.get("expand_radius", 2.0))
+    refine_radius = float(staged_cfg.get("refine_radius", 1.0))
+    budget_split = staged_cfg.get("time_budget_split", [0.5, 0.3, 0.2]) or [0.5, 0.3, 0.2]
+    budget_split = [float(x) for x in budget_split]
+    total_weight = sum(budget_split) or 1.0
+
+    def _budget(idx: int) -> int:
+        weight = budget_split[idx] if idx < len(budget_split) else budget_split[-1]
+        return max(1, int(time_budget * weight / total_weight))
+
+    def _run(phase: str, phase_grid: Dict[str, Any], mode: str, samples: int, stage_seed: int) -> Dict[str, Any]:
+        return optimize_ticker(
+            ticker,
+            phase_grid,
+            intrabar_paths,
+            top_k=top_k,
+            time_budget=_budget(len(results)),
+            search_mode=mode,
+            n_samples=samples,
+            seed=stage_seed,
+            max_exhaustive=max_exhaustive,
+            execution=execution,
+            robustness=robustness,
+            phase=phase,
+            filters=filters,
+        )
+
+    results: List[Dict[str, Any]] = []
+
+    # Stage 1: initial random grid search
+    results.append(_run("initial", grid, "sample", n_samples, seed))
+    top = results[-1].get("top", []) or []
+    if not top:
+        return results
+
+    # Stage 2: expanded grid around the best suitable candidate
+    expanded_grid = build_neighborhood_grid(grid, top[0].get("params", {}), expand_radius)
+    expand_samples = max(n_samples, int(staged_cfg.get("expand_samples", 2 * n_samples)))
+    results.append(_run("expanded", expanded_grid, "sample", expand_samples, seed + 1))
+    top = results[-1].get("top", []) or []
+    if not top:
+        return results
+
+    # Stage 3: refined grid around the top expanded candidate
+    refined_grid = build_neighborhood_grid(expanded_grid, top[0].get("params", {}), refine_radius)
+    results.append(_run("refined", refined_grid, "auto", n_samples, seed + 2))
+    return results

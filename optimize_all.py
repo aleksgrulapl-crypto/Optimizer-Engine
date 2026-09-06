@@ -1,12 +1,18 @@
 """
-Orchestrator with parity gating and phased optimization.
+Orchestrator with parity gating and per-ticker staged optimization.
 
 Flow:
 1) Data sanity checks (timeframe file exists + non-empty candles)
 2) Parity gate checks (tv_export exists and parity_ok=true when enabled)
-3) Constrained optimization
-4) Expanded optimization
-5) Robustness-filtered top candidates returned by worker
+3) Initial random grid search (per ticker and timeframe)
+4) Expanded grid around the best suitable candidate
+5) Refined grid around the top candidate from the expanded stage
+6) Robustness-filtered top candidates returned by worker
+
+Suitable candidates must satisfy the configured filters (win rate >= 50%,
+profit factor >= 1.2, positive net profit by default); ranking prefers lower
+drawdown on score ties. Each stage runs for every ticker entry in the config,
+which covers both the 15m and 30m timeframes.
 """
 
 import json
@@ -26,7 +32,7 @@ except Exception:
     yaml = None  # type: ignore
     _HAS_YAML = False
 
-from optimizer_worker import optimize_ticker
+from optimizer_worker import DEFAULT_FILTERS, optimize_ticker, staged_search
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "tickers": [],
@@ -65,6 +71,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "evaluate_top_n": 8,
         "reject_if_any_segment_pf_below": 1.0,
         "reject_if_any_segment_net_profit_below_or_equal": 0.0,
+    },
+    # Staged search per ticker/timeframe: initial random grid -> expanded grid
+    # around the best suitable candidate -> refined grid around the top expanded candidate.
+    "staged_search": {
+        "enabled": True,
+        "filters": dict(DEFAULT_FILTERS),
+        "expand_radius": 2.0,
+        "refine_radius": 1.0,
+        "time_budget_split": [0.5, 0.3, 0.2],
     },
 }
 
@@ -187,50 +202,48 @@ def _run_phase(
     execution = cfg.get("execution", {}) or {}
     intrabar_paths = [execution.get("intrabar_path", "ohlc")]
     robustness = cfg.get("robustness", {}) or {}
+    filters = (cfg.get("staged_search", {}) or {}).get("filters", None) or None
 
     args = []
     for t in phase_tickers:
-        args.append((t, grid, intrabar_paths, top_k, time_budget, search_mode, n_samples, seed, max_exhaustive, execution, robustness, phase_name))
+        args.append((t, grid, intrabar_paths, top_k, time_budget, search_mode, n_samples, seed, max_exhaustive, execution, robustness, phase_name, filters))
 
     with Pool(workers) as pool:
         return pool.starmap(optimize_ticker, args)
 
 
-def main() -> None:
-    cfg = load_config()
-    tickers = cfg.get("tickers", []) or []
-    if not tickers:
-        tickers = discover_tsvs_auto()
-    if not tickers:
-        print("No tickers found in config and no TSVs discovered in data/. Exiting.")
-        return
+def _run_staged_search(
+    tickers: List[Dict[str, Any]],
+    grid: Dict[str, Any],
+    cfg: Dict[str, Any],
+) -> List[List[Dict[str, Any]]]:
+    """Run the staged search (initial random -> expanded -> refined) per ticker/timeframe."""
+    workers = int(cfg.get("parallel_workers", 2))
+    top_k = int(cfg.get("top_k_per_ticker", 5))
+    time_budget = int(cfg.get("time_budget_seconds_per_ticker", 1800))
+    n_samples = int(cfg.get("n_samples_per_ticker", cfg.get("n_samples", 1000)))
+    seed = int(cfg.get("random_seed", 0))
+    max_exhaustive = int(cfg.get("max_exhaustive", 150000))
+    execution = cfg.get("execution", {}) or {}
+    intrabar_paths = [execution.get("intrabar_path", "ohlc")]
+    robustness = cfg.get("robustness", {}) or {}
+    staged_cfg = cfg.get("staged_search", {}) or {}
 
-    parity_cfg = cfg.get("parity", {}) or {}
-    progress_rows: List[List[Any]] = []
-
-    gated_tickers: List[Dict[str, Any]] = []
+    args = []
     for t in tickers:
-        symbol = t.get("symbol", "")
-        ok, note = _sanity_check_ticker(t)
-        if not ok:
-            progress_rows.append([symbol, "sanity", "skipped", 0, 0, "", note])
-            continue
-        p_ok, p_note = _parity_gate_pass(t, parity_cfg)
-        if not p_ok:
-            progress_rows.append([symbol, "parity", "skipped", 0, 0, "", p_note])
-            continue
-        progress_rows.append([symbol, "parity", "ready", 0, 0, "", p_note])
-        gated_tickers.append(t)
+        args.append((t, grid, intrabar_paths, top_k, time_budget, n_samples, seed, max_exhaustive, execution, robustness, staged_cfg))
 
-    progress_path = Path("optimizer_results") / "progress.csv"
-    _write_progress_rows(progress_path, progress_rows)
+    with Pool(workers) as pool:
+        return pool.starmap(staged_search, args)
 
-    if not gated_tickers:
-        print("No tickers passed sanity + parity gates. Exiting.")
-        return
 
+def _run_legacy_phases(
+    gated_tickers: List[Dict[str, Any]],
+    cfg: Dict[str, Any],
+    progress_rows: List[List[Any]],
+) -> List[Dict[str, Any]]:
+    """Original phased flow (constrained -> fallback -> expanded)."""
     print(f"Starting constrained optimization for {len(gated_tickers)} tickers")
-    start = time()
 
     constrained_grid = cfg.get("grid_constrained") or cfg.get("grid") or {}
     constrained_results = _run_phase("constrained", gated_tickers, constrained_grid, cfg)
@@ -287,14 +300,72 @@ def main() -> None:
             top_score = top[0].get("score", "") if top else ""
             progress_rows.append([symbol, "expanded", "done", r.get("evaluated", 0), round(float(r.get("elapsed_seconds", 0.0)), 2), top_score, r.get("note", "")])
 
-    # pick final per symbol: prefer expanded > fallback > constrained
-    by_symbol: Dict[str, Dict[str, Any]] = {}
+    # prefer expanded > fallback > constrained
+    final: Dict[str, Dict[str, Any]] = {}
     for r in constrained_results:
-        by_symbol[r.get("symbol", "")] = r
+        final[r.get("symbol", "")] = r
     for r in fallback_results:
-        by_symbol[r.get("symbol", "")] = r
+        final[r.get("symbol", "")] = r
     for r in expanded_results:
-        by_symbol[r.get("symbol", "")] = r
+        final[r.get("symbol", "")] = r
+    return list(final.values())
+
+
+def main() -> None:
+    cfg = load_config()
+    tickers = cfg.get("tickers", []) or []
+    if not tickers:
+        tickers = discover_tsvs_auto()
+    if not tickers:
+        print("No tickers found in config and no TSVs discovered in data/. Exiting.")
+        return
+
+    parity_cfg = cfg.get("parity", {}) or {}
+    progress_rows: List[List[Any]] = []
+
+    gated_tickers: List[Dict[str, Any]] = []
+    for t in tickers:
+        symbol = t.get("symbol", "")
+        ok, note = _sanity_check_ticker(t)
+        if not ok:
+            progress_rows.append([symbol, "sanity", "skipped", 0, 0, "", note])
+            continue
+        p_ok, p_note = _parity_gate_pass(t, parity_cfg)
+        if not p_ok:
+            progress_rows.append([symbol, "parity", "skipped", 0, 0, "", p_note])
+            continue
+        progress_rows.append([symbol, "parity", "ready", 0, 0, "", p_note])
+        gated_tickers.append(t)
+
+    progress_path = Path("optimizer_results") / "progress.csv"
+    _write_progress_rows(progress_path, progress_rows)
+
+    if not gated_tickers:
+        print("No tickers passed sanity + parity gates. Exiting.")
+        return
+
+    start = time()
+    staged_cfg = cfg.get("staged_search", {}) or {}
+    if bool(staged_cfg.get("enabled", True)):
+        base_grid = cfg.get("grid_constrained") or cfg.get("grid") or {}
+        print(f"Starting staged search for {len(gated_tickers)} ticker/timeframe entries")
+        stage_results = _run_staged_search(gated_tickers, base_grid, cfg)
+        final_results: List[Dict[str, Any]] = []
+        for stage_list in stage_results:
+            final_results.append(stage_list[-1] if stage_list else {})
+            for r in stage_list:
+                symbol = r.get("symbol", "")
+                top = r.get("top", []) or []
+                top_score = top[0].get("score", "") if top else ""
+                progress_rows.append([symbol, r.get("phase", ""), "done", r.get("evaluated", 0), round(float(r.get("elapsed_seconds", 0.0)), 2), top_score, r.get("note", "")])
+    else:
+        final_results = _run_legacy_phases(gated_tickers, cfg, progress_rows)
+
+    # pick final per symbol/timeframe entry
+    by_symbol: Dict[str, Dict[str, Any]] = {}
+    for r in final_results:
+        key = f"{r.get('symbol', '')}_{str(r.get('timeframe') or '').strip().lower()}"
+        by_symbol[key] = r
 
     out = Path("optimizer_results")
     out.mkdir(exist_ok=True)
