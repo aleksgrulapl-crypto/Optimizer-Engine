@@ -11,6 +11,9 @@ import random
 from pathlib import Path
 from typing import Dict, Any, List, Iterator, Tuple
 
+from data_loader import load_candles_from_csv
+from backtest_engine import run_backtest
+
 # Default acceptance filters for a candidate to be considered suitable:
 # win rate >= 50%, profit factor >= 1.2, strictly positive net profit.
 DEFAULT_FILTERS: Dict[str, Any] = {
@@ -29,9 +32,6 @@ NEIGHBORHOOD_STEPS: Dict[str, Tuple[float, int]] = {
     "atrTPmult": (0.2, 0),
     "emaLen": (0.0, 5),
 }
-
-from data_loader import load_candles_from_csv
-from backtest_engine import run_backtest
 
 
 # -------------------------
