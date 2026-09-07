@@ -7,6 +7,7 @@ import time
 import csv
 import json
 import itertools
+import hashlib
 import random
 from pathlib import Path
 from typing import Dict, Any, List, Iterator, Tuple
@@ -21,6 +22,19 @@ DEFAULT_FILTERS: Dict[str, Any] = {
     "min_profit_factor": 1.2,
     "min_net_profit": 0.0,
     "min_trades": 10,
+}
+
+# Strong-candidate bar: a ticker/timeframe run is only considered complete
+# once at least one candidate clears these thresholds — strictly positive net
+# profit, profit factor >= 1.4, win rate >= 45% and a reasonably low max
+# drawdown. The optimizer does not treat a ticker as finished until a strong
+# candidate has been found (or its time budget is exhausted).
+STRONG_FILTERS: Dict[str, Any] = {
+    "min_win_rate": 0.45,
+    "min_profit_factor": 1.4,
+    "min_net_profit": 0.0,
+    "min_trades": 10,
+    "max_drawdown_pct": 0.25,
 }
 
 # Fallback step sizes per parameter when the base grid does not define one
@@ -230,6 +244,25 @@ def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
     if tc < int(filters.get("min_trades", 10)):
         return False
     return True
+
+
+def is_strong_candidate(metrics: Dict[str, Any], strong_filters: Dict[str, Any] = None) -> bool:
+    """Strong-candidate check: positive net profit, profit factor >= 1.4,
+    win rate >= 45% and a reasonably low max drawdown. A ticker/timeframe run
+    is only treated as complete once a candidate passes this bar."""
+    if not passes_filters(metrics, {**STRONG_FILTERS, **(strong_filters or {})}):
+        return False
+    dd_pct = float(metrics.get("max_drawdown_pct", 0.0))
+    cap = float((strong_filters or {}).get("max_drawdown_pct", STRONG_FILTERS["max_drawdown_pct"]))
+    return dd_pct <= cap
+
+
+def derive_seed(base_seed: int, symbol: Any, timeframe: Any) -> int:
+    """Per-ticker random seed: stable hash of (base seed, symbol, timeframe)
+    so parallel workers sample different points of the grid instead of all
+    walking the same random sequence (spreads the load across the CPU)."""
+    key = f"{base_seed}|{symbol}|{timeframe}".encode("utf-8")
+    return int(hashlib.sha256(key).hexdigest()[:8], 16)
 
 
 def _candidate_rank_key(candidate: Dict[str, Any]) -> Tuple[float, float]:
@@ -635,16 +668,21 @@ def staged_search(ticker: Dict[str, Any],
     """Run the staged search strategy for a single ticker/timeframe entry.
 
     Stage order:
-      1) initial   - random sampling of the base grid
+      1) initial   - random sampling of the base grid (wide, loose ranges)
       2) expanded  - grid expanded around the best suitable initial candidate
       3) refined   - narrower grid around the best candidate from the expanded stage
 
     Candidates must satisfy the configured filters (win rate, profit factor,
     net profit, trade count); ranking prefers lower drawdown on score ties.
-    Later stages are skipped when no suitable candidate is found.
+    Later stages are skipped when no suitable candidate is found, and the
+    refined stage only runs once a strong candidate (positive net profit,
+    PF >= 1.4, WR >= 45%, low drawdown) has been found. Each stage reports
+    ``strong_candidate_found`` so the orchestrator only treats a ticker as
+    finished once the strong bar is cleared (or its budget is exhausted).
     """
     staged_cfg = staged_cfg or {}
     filters = staged_cfg.get("filters", None) or None
+    strong_filters = {**STRONG_FILTERS, **(staged_cfg.get("strong_filters", {}) or {})}
     expand_radius = float(staged_cfg.get("expand_radius", 2.0))
     refine_radius = float(staged_cfg.get("refine_radius", 1.0))
     budget_split = staged_cfg.get("time_budget_split", [0.5, 0.3, 0.2]) or [0.5, 0.3, 0.2]
@@ -655,8 +693,15 @@ def staged_search(ticker: Dict[str, Any],
         weight = budget_split[idx] if idx < len(budget_split) else budget_split[-1]
         return max(1, int(time_budget * weight / total_weight))
 
+    def _mark_strong(res: Dict[str, Any]) -> Dict[str, Any]:
+        top = res.get("top", []) or []
+        res["strong_candidate_found"] = any(
+            is_strong_candidate(c.get("metrics", {}) or {}, strong_filters) for c in top
+        )
+        return res
+
     def _run(phase: str, phase_grid: Dict[str, Any], mode: str, samples: int, stage_seed: int) -> Dict[str, Any]:
-        return optimize_ticker(
+        return _mark_strong(optimize_ticker(
             ticker,
             phase_grid,
             intrabar_paths,
@@ -670,12 +715,14 @@ def staged_search(ticker: Dict[str, Any],
             robustness=robustness,
             phase=phase,
             filters=filters,
-        )
+        ))
 
     results: List[Dict[str, Any]] = []
 
-    # Stage 1: initial random grid search
-    results.append(_run("initial", grid, "sample", n_samples, seed))
+    # Stage 1: initial random grid search (per-ticker seed spreads sampled
+    # points across parallel workers, taking pressure off the CPU).
+    stage_seed = derive_seed(seed, ticker.get("symbol"), ticker.get("timeframe"))
+    results.append(_run("initial", grid, "sample", n_samples, stage_seed))
     top = results[-1].get("top", []) or []
     if not top:
         return results
@@ -683,12 +730,16 @@ def staged_search(ticker: Dict[str, Any],
     # Stage 2: expanded grid around the best suitable candidate
     expanded_grid = build_neighborhood_grid(grid, top[0].get("params", {}), expand_radius)
     expand_samples = max(n_samples, int(staged_cfg.get("expand_samples", 2 * n_samples)))
-    results.append(_run("expanded", expanded_grid, "sample", expand_samples, seed + 1))
+    results.append(_run("expanded", expanded_grid, "sample", expand_samples, stage_seed + 1))
     top = results[-1].get("top", []) or []
     if not top:
         return results
 
-    # Stage 3: refined grid around the top expanded candidate
+    # Stage 3: refined grid around the top expanded candidate. Only refine
+    # once the strong bar has been cleared — without a strong candidate there
+    # is nothing worth narrowing down further.
+    if not results[-1].get("strong_candidate_found"):
+        return results
     refined_grid = build_neighborhood_grid(expanded_grid, top[0].get("params", {}), refine_radius)
-    results.append(_run("refined", refined_grid, "auto", n_samples, seed + 2))
+    results.append(_run("refined", refined_grid, "auto", n_samples, stage_seed + 2))
     return results

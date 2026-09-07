@@ -4,15 +4,19 @@ Orchestrator with parity gating and per-ticker staged optimization.
 Flow:
 1) Data sanity checks (timeframe file exists + non-empty candles)
 2) Parity gate checks (tv_export exists and parity_ok=true when enabled)
-3) Initial random grid search (per ticker and timeframe)
+3) Initial random grid search over a wide, loose base grid (per ticker and
+   timeframe; per-ticker seeds spread sampled points across workers to take
+   pressure off the CPU)
 4) Expanded grid around the best suitable candidate
-5) Refined grid around the top candidate from the expanded stage
+5) Refined grid around the top expanded candidate (only once a strong
+   candidate exists)
 6) Robustness-filtered top candidates returned by worker
 
-Suitable candidates must satisfy the configured filters (win rate >= 50%,
-profit factor >= 1.2, positive net profit by default); ranking prefers lower
-drawdown on score ties. Each stage runs for every ticker entry in the config,
-which covers both the 15m and 30m timeframes.
+A ticker/timeframe run is only treated as finished once a strong candidate
+has been found — positive net profit, profit factor >= 1.4, win rate >= 45%
+and a reasonably low drawdown — or its time budget (about an hour by
+default) is exhausted; the optimizer then moves on to the next ticker from
+the config, which covers both the 15m and 30m timeframes per ticker.
 """
 
 import json
@@ -32,16 +36,16 @@ except Exception:
     yaml = None  # type: ignore
     _HAS_YAML = False
 
-from optimizer_worker import DEFAULT_FILTERS, optimize_ticker, staged_search
+from optimizer_worker import DEFAULT_FILTERS, STRONG_FILTERS, optimize_ticker, staged_search
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "tickers": [],
     "grid": {
-        "stMultiplier": [1.6, 2.0, 2.4],
-        "stPeriod": [6, 8, 10],
-        "atrSLmult": [1.0, 1.2],
-        "atrTPmult": [2.0, 3.0, 4.0],
-        "emaLen": [20, 50]
+        "stMultiplier": {"start": 1.0, "stop": 5.0, "step": 0.2},
+        "stPeriod": {"min": 6, "max": 18, "count": 13},
+        "atrSLmult": {"start": 1.0, "stop": 2.6, "step": 0.2},
+        "atrTPmult": {"start": 1.6, "stop": 10.0, "step": 0.4},
+        "emaLen": {"min": 20, "max": 300, "count": 15},
     },
     "grid_constrained": None,
     "grid_expand": None,
@@ -49,7 +53,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "parallel_workers": 2,
     "intrabar_paths": ["ohlc"],
     "top_k_per_ticker": 5,
-    "time_budget_seconds_per_ticker": 1800,
+    "time_budget_seconds_per_ticker": 3600,
     "search_mode": "auto",
     "n_samples_per_ticker": 1000,
     "random_seed": 0,
@@ -77,6 +81,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "staged_search": {
         "enabled": True,
         "filters": dict(DEFAULT_FILTERS),
+        "strong_filters": dict(STRONG_FILTERS),
+        "require_strong_candidate": True,
         "expand_radius": 2.0,
         "refine_radius": 1.0,
         "time_budget_split": [0.5, 0.3, 0.2],
@@ -217,10 +223,18 @@ def _run_staged_search(
     grid: Dict[str, Any],
     cfg: Dict[str, Any],
 ) -> List[List[Dict[str, Any]]]:
-    """Run the staged search (initial random -> expanded -> refined) per ticker/timeframe."""
+    """Run the staged search (initial random -> expanded -> refined) per ticker/timeframe.
+
+    When ``staged_search.require_strong_candidate`` is enabled, tickers whose
+    strong-candidate bar (positive net profit, PF >= 1.4, WR >= 45%, low
+    drawdown) was not cleared within their budget get a second pass with the
+    remaining tickers before the optimizer moves on — a ticker is only
+    considered finished once a strong candidate has been found or every
+    budgeted pass over it is exhausted.
+    """
     workers = int(cfg.get("parallel_workers", 2))
     top_k = int(cfg.get("top_k_per_ticker", 5))
-    time_budget = int(cfg.get("time_budget_seconds_per_ticker", 1800))
+    time_budget = int(cfg.get("time_budget_seconds_per_ticker", 3600))
     n_samples = int(cfg.get("n_samples_per_ticker", cfg.get("n_samples", 1000)))
     seed = int(cfg.get("random_seed", 0))
     max_exhaustive = int(cfg.get("max_exhaustive", 150000))
@@ -228,13 +242,38 @@ def _run_staged_search(
     intrabar_paths = [execution.get("intrabar_path", "ohlc")]
     robustness = cfg.get("robustness", {}) or {}
     staged_cfg = cfg.get("staged_search", {}) or {}
+    require_strong = bool(staged_cfg.get("require_strong_candidate", True))
+    max_retries = int(staged_cfg.get("max_retries_per_ticker", 1)) if require_strong else 0
 
-    args = []
-    for t in tickers:
-        args.append((t, grid, intrabar_paths, top_k, time_budget, n_samples, seed, max_exhaustive, execution, robustness, staged_cfg))
+    results: Dict[int, List[Dict[str, Any]]] = {}
+    pending = list(range(len(tickers)))
+    attempt = 0
 
-    with Pool(workers) as pool:
-        return pool.starmap(staged_search, args)
+    def _found_strong(stage_list: List[Dict[str, Any]]) -> bool:
+        return any(bool(r.get("strong_candidate_found")) for r in stage_list)
+
+    while pending:
+        attempt += 1
+        if attempt > 1:
+            # Resume files skip already-evaluated combos, so each extra pass
+            # spends the ticker's budget exploring fresh parameter space.
+            print(f"Strong candidate not found for {len(pending)} ticker/timeframe entries; re-running with fresh budget (pass {attempt})")
+        args = []
+        for i in pending:
+            t = tickers[i]
+            args.append((t, grid, intrabar_paths, top_k, time_budget, n_samples, seed, max_exhaustive, execution, robustness, staged_cfg))
+        with Pool(workers) as pool:
+            pass_results = pool.starmap(staged_search, args)
+        still_pending: List[int] = []
+        for i, stage_list in zip(pending, pass_results):
+            results[i] = stage_list
+            if require_strong and not _found_strong(stage_list) and attempt <= max_retries:
+                still_pending.append(i)
+        if not require_strong or not still_pending:
+            break
+        pending = still_pending
+
+    return [results.get(i, []) for i in range(len(tickers))]
 
 
 def _run_legacy_phases(
@@ -357,7 +396,10 @@ def main() -> None:
                 symbol = r.get("symbol", "")
                 top = r.get("top", []) or []
                 top_score = top[0].get("score", "") if top else ""
-                progress_rows.append([symbol, r.get("phase", ""), "done", r.get("evaluated", 0), round(float(r.get("elapsed_seconds", 0.0)), 2), top_score, r.get("note", "")])
+                note = r.get("note", "")
+                if r.get("strong_candidate_found"):
+                    note = (note + "; " if note else "") + "strong candidate found"
+                progress_rows.append([symbol, r.get("phase", ""), "done", r.get("evaluated", 0), round(float(r.get("elapsed_seconds", 0.0)), 2), top_score, note])
     else:
         final_results = _run_legacy_phases(gated_tickers, cfg, progress_rows)
 

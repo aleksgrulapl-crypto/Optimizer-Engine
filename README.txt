@@ -14,17 +14,31 @@ Workflow (required order):
 1) Data sanity check
 2) Parity check
 3) Staged search per ticker and timeframe (15m and 30m):
-   a. Initial random grid search over the base grid (grid_constrained)
-   b. Expanded grid around the best suitable candidate from the initial stage
-   c. Refined grid around the top candidate from the expanded stage
+   a. Initial random grid search over a wide, loose base grid
+      (grid_constrained: stMultiplier 1-5, stPeriod 6-18, atrSLmult 1-2.6,
+      atrTPmult 1.6-10, emaLen 20-300), seeded per ticker/timeframe so
+      parallel workers explore different grid points and take pressure off
+      the CPU
+   b. Expanded grid narrowed around the best suitable candidate from the
+      initial stage
+   c. Refined grid narrowed further around the top expanded candidate (only
+      once a strong candidate exists)
 4) Robustness check
 5) Finalize presets
 
-Candidate suitability filters (configurable via the staged_search block in
-tickers.yaml): win rate >= 50%, profit factor >= 1.2, strictly positive net
-profit, and a minimum trade count. Candidates are ranked by score, preferring
-lower drawdown on ties. Set staged_search.enabled: false to fall back to the
-legacy constrained/fallback/expanded phases.
+Each ticker/timeframe entry gets about an hour of budget (configurable via
+time_budget_seconds_per_ticker, i.e. roughly 30m per 15M preset and 30m per
+30M preset for a ticker). A ticker is only treated as finished once a strong
+candidate has been found — positive net profit, profit factor >= 1.4, win
+rate >= 45%, and a reasonably low max drawdown (<= 25% by default) — or its
+budget is exhausted; the optimizer then moves on to the next ticker in
+tickers.yaml.
+
+Candidate suitability filters and the strong-candidate bar are configurable
+via the staged_search block in tickers.yaml (filters / strong_filters).
+Candidates are ranked by score, preferring lower drawdown on ties. Set
+staged_search.enabled: false to fall back to the legacy
+constrained/fallback/expanded phases.
 
 1) Install dependencies:
    python -m pip install pyyaml pandas pytz
