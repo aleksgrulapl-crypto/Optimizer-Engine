@@ -15,7 +15,10 @@ import optimizer_worker as ow
 from optimize_all import merge_with_defaults
 from optimizer_worker import (
     DEFAULT_FILTERS,
+    STRONG_FILTERS,
     build_neighborhood_grid,
+    derive_seed,
+    is_strong_candidate,
     passes_filters,
     staged_search,
 )
@@ -73,6 +76,41 @@ class PassesFiltersTests(unittest.TestCase):
         self.assertFalse(passes_filters(m, DEFAULT_FILTERS))
         relaxed = {"min_win_rate": 0.30, "min_profit_factor": 1.0, "min_net_profit": 0.0, "min_trades": 1}
         self.assertTrue(passes_filters(m, relaxed))
+
+
+class StrongCandidateTests(unittest.TestCase):
+    def test_default_thresholds(self):
+        self.assertEqual(STRONG_FILTERS["min_win_rate"], 0.45)
+        self.assertEqual(STRONG_FILTERS["min_profit_factor"], 1.4)
+        self.assertEqual(STRONG_FILTERS["min_net_profit"], 0.0)
+        self.assertIn("max_drawdown_pct", STRONG_FILTERS)
+
+    def test_accepts_strong_candidate(self):
+        m = {"net_profit": 250.0, "profit_factor": 1.6, "win_rate": 0.52, "trade_count": 40, "max_drawdown_pct": 0.10}
+        self.assertTrue(is_strong_candidate(m))
+
+    def test_rejects_weak_candidates(self):
+        base = {"net_profit": 250.0, "profit_factor": 1.6, "win_rate": 0.52, "trade_count": 40, "max_drawdown_pct": 0.10}
+        self.assertFalse(is_strong_candidate({**base, "profit_factor": 1.39}))
+        self.assertFalse(is_strong_candidate({**base, "win_rate": 0.44}))
+        self.assertFalse(is_strong_candidate({**base, "net_profit": 0.0}))
+        self.assertFalse(is_strong_candidate({**base, "max_drawdown_pct": 0.40}))
+
+    def test_drawdown_cap_configurable(self):
+        m = {"net_profit": 250.0, "profit_factor": 1.6, "win_rate": 0.52, "trade_count": 40, "max_drawdown_pct": 0.40}
+        self.assertTrue(is_strong_candidate(m, {"max_drawdown_pct": 0.50}))
+
+
+class DeriveSeedTests(unittest.TestCase):
+    def test_distinct_per_ticker(self):
+        self.assertNotEqual(derive_seed(42, "NVDA", "15m"), derive_seed(42, "NVDA", "30m"))
+        self.assertNotEqual(derive_seed(42, "NVDA", "15m"), derive_seed(42, "MU", "15m"))
+
+    def test_stable(self):
+        self.assertEqual(derive_seed(42, "NVDA", "15m"), derive_seed(42, "NVDA", "15m"))
+
+    def test_depends_on_base_seed(self):
+        self.assertNotEqual(derive_seed(0, "NVDA", "15m"), derive_seed(1, "NVDA", "15m"))
 
 
 class CandidateRankingTests(unittest.TestCase):
@@ -216,6 +254,30 @@ class StagedSearchEndToEndTests(unittest.TestCase):
         self.assertEqual(results[0]["phase"], "initial")
         self.assertFalse(results[0]["top"])
 
+    def test_marks_strong_candidate_found(self):
+        results = self._run()
+        self.assertTrue(all("strong_candidate_found" in r for r in results))
+        self.assertTrue(any(r["strong_candidate_found"] for r in results))
+
+    def test_refined_skipped_without_strong_candidate(self):
+        # Suitable filters pass but the strong bar is unreachable, so the run
+        # stops after the expanded stage without refining further.
+        unreachable_strong = {
+            "strong_filters": {
+                "min_win_rate": 0.45,
+                "min_profit_factor": 1.4,
+                "min_net_profit": 0.0,
+                "min_trades": 10,
+                "max_drawdown_pct": -1.0,
+            },
+            "expand_radius": 1,
+            "refine_radius": 0.2,
+            "time_budget_split": [0.5, 0.3, 0.2],
+        }
+        results = self._run(staged_cfg=unreachable_strong)
+        self.assertEqual([r["phase"] for r in results], ["initial", "expanded"])
+        self.assertFalse(results[-1]["strong_candidate_found"])
+
 
 class StagedConfigTests(unittest.TestCase):
     def test_defaults_present(self):
@@ -223,9 +285,12 @@ class StagedConfigTests(unittest.TestCase):
         staged = cfg["staged_search"]
         self.assertTrue(staged["enabled"])
         self.assertEqual(staged["filters"], DEFAULT_FILTERS)
+        self.assertEqual(staged["strong_filters"], STRONG_FILTERS)
+        self.assertTrue(staged["require_strong_candidate"])
         self.assertIn("expand_radius", staged)
         self.assertIn("refine_radius", staged)
         self.assertIn("time_budget_split", staged)
+        self.assertEqual(cfg["time_budget_seconds_per_ticker"], 3600)
 
     def test_repo_yaml_loads_staged_defaults(self):
         from optimize_all import load_config
@@ -237,15 +302,41 @@ class StagedConfigTests(unittest.TestCase):
             os.chdir(old_cwd)
         staged = cfg["staged_search"]
         self.assertTrue(staged["enabled"])
-        self.assertEqual(staged["filters"]["min_win_rate"], 0.50)
-        self.assertEqual(staged["filters"]["min_profit_factor"], 1.2)
+        self.assertEqual(staged["filters"]["min_win_rate"], 0.45)
+        self.assertEqual(staged["filters"]["min_profit_factor"], 1.4)
         self.assertEqual(staged["filters"]["min_net_profit"], 0.0)
+        strong = staged["strong_filters"]
+        self.assertEqual(strong["min_win_rate"], 0.45)
+        self.assertEqual(strong["min_profit_factor"], 1.4)
+        self.assertEqual(strong["min_net_profit"], 0.0)
+        self.assertEqual(strong["max_drawdown_pct"], 0.25)
+        self.assertTrue(staged["require_strong_candidate"])
 
     def test_merge_preserves_user_overrides(self):
         cfg = merge_with_defaults({"staged_search": {"enabled": False, "expand_radius": 3.0}})
         self.assertFalse(cfg["staged_search"]["enabled"])
         self.assertEqual(cfg["staged_search"]["expand_radius"], 3.0)
         self.assertEqual(cfg["staged_search"]["filters"], DEFAULT_FILTERS)
+
+    def test_repo_yaml_wide_initial_grid(self):
+        from optimize_all import load_config
+        old_cwd = Path.cwd()
+        os.chdir(REPO_ROOT)
+        try:
+            cfg = load_config()
+        finally:
+            os.chdir(old_cwd)
+        grid = cfg["grid_constrained"]
+        self.assertEqual(grid["stMultiplier"]["start"], 1.0)
+        self.assertEqual(grid["stMultiplier"]["stop"], 5.0)
+        self.assertEqual(grid["stPeriod"]["min"], 6)
+        self.assertEqual(grid["stPeriod"]["max"], 18)
+        self.assertEqual(grid["atrSLmult"]["start"], 1.0)
+        self.assertEqual(grid["atrSLmult"]["stop"], 2.6)
+        self.assertEqual(grid["atrTPmult"]["start"], 1.6)
+        self.assertEqual(grid["atrTPmult"]["stop"], 10.0)
+        self.assertEqual(grid["emaLen"]["min"], 20)
+        self.assertEqual(grid["emaLen"]["max"], 300)
 
 
 if __name__ == "__main__":
