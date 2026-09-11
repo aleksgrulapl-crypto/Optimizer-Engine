@@ -298,11 +298,10 @@ def _run_preset_phase(ticker: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, 
     return _mark_suitable(result, strong_filters)
 
 
-def _run_staged_cycle(ticker: Dict[str, Any], grid: Dict[str, Any], cfg: Dict[str, Any], cycle_index: int) -> List[Dict[str, Any]]:
+def _run_staged_cycle(ticker: Dict[str, Any], grid: Dict[str, Any], cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     n_samples = int(cfg.get("n_samples_per_ticker", cfg.get("n_samples", 1000)))
     staged_cfg = dict(cfg.get("staged_search", {}) or {})
-    staged_cfg["expand_radius"] = float(staged_cfg.get("expand_radius", 2.0)) * max(1, cycle_index + 1)
-    staged_cfg["expand_samples"] = max(n_samples, int(staged_cfg.get("expand_samples", 2 * n_samples))) * max(1, cycle_index + 1)
+    staged_cfg["expand_samples"] = max(n_samples, int(staged_cfg.get("expand_samples", 2 * n_samples)))
     return staged_search(
         ticker,
         grid,
@@ -310,7 +309,7 @@ def _run_staged_cycle(ticker: Dict[str, Any], grid: Dict[str, Any], cfg: Dict[st
         top_k=int(cfg.get("top_k_per_ticker", 5)),
         time_budget=int(cfg.get("time_budget_seconds_per_ticker", 3600)),
         n_samples=n_samples,
-        seed=int(cfg.get("random_seed", 0)) + (cycle_index * 100003),
+        seed=int(cfg.get("random_seed", 0)),
         max_exhaustive=int(cfg.get("max_exhaustive", 150000)),
         execution=(cfg.get("execution", {}) or {}),
         robustness=(cfg.get("robustness", {}) or {}),
@@ -549,7 +548,7 @@ def main() -> None:
                 for ticker in symbol_tickers:
                     timeframe_key = str(ticker.get("timeframe", "")).strip().lower()
                     if cycle_index == 0:
-                        stage_list = _run_staged_cycle(ticker, base_grid, cfg, cycle_index)
+                        stage_list = _run_staged_cycle(ticker, base_grid, cfg)
                         for result in stage_list:
                             _append_progress_row(progress_rows, result)
                         final_result = stage_list[-1] if stage_list else {}
@@ -570,10 +569,10 @@ def main() -> None:
                 suitable_found = any(bool(result.get("strong_candidate_found")) for result in summarized_results)
                 print(f"{symbol}: optimizer {'found' if suitable_found else 'did not find'} a suitable candidate under the current acceptance filters.")
                 if _prompt_yes_no(f"{symbol}: are the current candidates suitable"):
-                    while not _prompt_yes_no(f"{symbol}: move to the next ticker"):
-                        print(f"{symbol}: staying on the current ticker until you approve moving on.")
-                    final_results.extend(summarized_results)
-                    break
+                    if _prompt_yes_no(f"{symbol}: move to the next ticker"):
+                        final_results.extend(summarized_results)
+                        break
+                    print(f"{symbol}: current candidates kept; widening the expanded search before asking again.")
                 cycle_index += 1
                 print(f"{symbol}: continuing with a wider expanded search.")
     else:

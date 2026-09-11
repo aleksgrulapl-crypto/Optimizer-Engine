@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -105,12 +106,19 @@ class StrongCandidateTests(unittest.TestCase):
 
 class PresetAndGroupingTests(unittest.TestCase):
     def test_build_preset_grid_uses_single_values(self):
-        grid = _build_preset_grid("NVDA", "15m")
-        self.assertEqual(grid["stMultiplier"], [2.8])
-        self.assertEqual(grid["stPeriod"], [10])
-        self.assertEqual(grid["atrSLmult"], [1.4])
-        self.assertEqual(grid["atrTPmult"], [4.9])
-        self.assertEqual(grid["emaLen"], [88])
+        with mock.patch("optimize_all.get_presets", return_value={
+            "stMultiplier": 9.9,
+            "stPeriod": 21,
+            "atrSLmult": 1.7,
+            "atrTPmult": 6.3,
+            "emaLen": 55,
+        }):
+            grid = _build_preset_grid("ANY", "15m")
+        self.assertEqual(grid["stMultiplier"], [9.9])
+        self.assertEqual(grid["stPeriod"], [21])
+        self.assertEqual(grid["atrSLmult"], [1.7])
+        self.assertEqual(grid["atrTPmult"], [6.3])
+        self.assertEqual(grid["emaLen"], [55])
 
     def test_group_tickers_by_symbol_preserves_timeframe_order(self):
         grouped = _group_tickers_by_symbol([
@@ -128,6 +136,34 @@ class PresetAndGroupingTests(unittest.TestCase):
         self.assertFalse(result["top"])
         self.assertFalse(result["strong_candidate_found"])
         self.assertIn("preset skipped", result["note"])
+
+    def test_run_preset_phase_marks_supported_candidates(self):
+        ticker = {"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"}
+        mocked_result = {
+            "symbol": "NVDA",
+            "timeframe": "15m",
+            "phase": "preset",
+            "top": [{
+                "params": {"stMultiplier": 2.0},
+                "metrics": {
+                    "net_profit": 100.0,
+                    "profit_factor": 1.5,
+                    "win_rate": 0.45,
+                    "trade_count": 12,
+                    "max_drawdown_pct": 0.20,
+                },
+            }],
+            "evaluated": 1,
+            "elapsed_seconds": 0.01,
+            "note": "ok",
+        }
+        with mock.patch("optimize_all.get_presets", return_value={"stMultiplier": 2.0}), mock.patch(
+            "optimize_all.optimize_ticker",
+            return_value=mocked_result,
+        ):
+            result = _run_preset_phase(ticker, {"staged_search": {}})
+        self.assertTrue(result["strong_candidate_found"])
+        self.assertEqual(result["top"][0]["metrics"]["profit_factor"], 1.5)
 
 
 class DeriveSeedTests(unittest.TestCase):
