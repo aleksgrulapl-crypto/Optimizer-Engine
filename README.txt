@@ -13,7 +13,8 @@ Core files in this repository:
 Workflow (required order):
 1) Data sanity check
 2) Parity check
-3) Staged search per ticker and timeframe (15m and 30m):
+3) Per-symbol preset check for the available 15m and 30m entries
+4) Staged search per ticker and timeframe:
    a. Initial random grid search over a wide, loose base grid
       (grid_constrained: stMultiplier 1-5, stPeriod 6-18, atrSLmult 1-2.6,
       atrTPmult 1.6-10, emaLen 20-300), seeded per ticker/timeframe so
@@ -21,22 +22,23 @@ Workflow (required order):
       the CPU
    b. Expanded grid narrowed around the best suitable candidate from the
       initial stage
-   c. Refined grid narrowed further around the top expanded candidate (only
-      once a strong candidate exists)
-4) Robustness check
-5) Finalize presets
+   c. Interactive gate: review the current results and decide whether to move
+      to the next ticker or keep widening the expanded search
+5) Robustness check
+6) Finalize presets
 
 Each ticker/timeframe entry gets about an hour of budget (configurable via
 time_budget_seconds_per_ticker, i.e. roughly 30m per 15M preset and 30m per
-30M preset for a ticker). A ticker is only treated as finished once a strong
-candidate has been found — positive net profit, profit factor >= 1.4, win
-rate >= 45%, and a reasonably low max drawdown (<= 25% by default) — or its
-budget is exhausted; the optimizer then moves on to the next ticker in
-tickers.yaml.
+30M preset for a ticker). optimize_all.py now runs one symbol at a time,
+checks both timeframe presets first, and then asks whether the current
+candidates are suitable before it will move on. The acceptance bar is
+positive net profit, profit factor >= 1.4, win rate >= 40%, and a reasonably
+low max drawdown (<= 25% by default).
 
-Candidate suitability filters and the strong-candidate bar are configurable
-via the staged_search block in tickers.yaml (filters / strong_filters).
-Candidates are ranked by score, preferring lower drawdown on ties. Set
+Candidate suitability filters and the gating summary thresholds are
+configurable via the staged_search block in tickers.yaml (filters /
+strong_filters). Candidates are ranked by score, preferring lower drawdown on
+ties. Set
 staged_search.enabled: false to fall back to the legacy
 constrained/fallback/expanded phases.
 
@@ -79,12 +81,12 @@ constrained/fallback/expanded phases.
    1.4, at least 10 trades, and max drawdown <= 25%.
 
 Outputs:
+- optimizer_results/best_{SYMBOL}_preset.csv
 - optimizer_results/best_{SYMBOL}_initial.csv
 - optimizer_results/best_{SYMBOL}_expanded.csv
-- optimizer_results/best_{SYMBOL}_refined.csv
+- optimizer_results/report_{SYMBOL}_preset.json
 - optimizer_results/report_{SYMBOL}_initial.json
 - optimizer_results/report_{SYMBOL}_expanded.json
-- optimizer_results/report_{SYMBOL}_refined.json
 - optimizer_results/best_presets.csv
 - optimizer_results/progress.csv
 - optimizer_results/best_{SYMBOL}_refine.csv        (optimize_single.py)

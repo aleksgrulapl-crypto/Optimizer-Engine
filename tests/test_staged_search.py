@@ -1,4 +1,4 @@
-"""Tests for the staged search strategy (initial random -> expanded -> refined)."""
+"""Tests for the staged search strategy (initial random -> expanded)."""
 
 import csv
 import math
@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import optimizer_worker as ow
-from optimize_all import merge_with_defaults
+from optimize_all import _build_preset_grid, _group_tickers_by_symbol, merge_with_defaults
 from optimizer_worker import (
     DEFAULT_FILTERS,
     STRONG_FILTERS,
@@ -55,32 +55,34 @@ def write_tsv(path: Path, candles) -> None:
 
 class PassesFiltersTests(unittest.TestCase):
     def test_default_thresholds(self):
-        self.assertEqual(DEFAULT_FILTERS["min_win_rate"], 0.50)
-        self.assertEqual(DEFAULT_FILTERS["min_profit_factor"], 1.2)
+        self.assertEqual(DEFAULT_FILTERS["min_win_rate"], 0.40)
+        self.assertEqual(DEFAULT_FILTERS["min_profit_factor"], 1.4)
         self.assertEqual(DEFAULT_FILTERS["min_net_profit"], 0.0)
+        self.assertEqual(DEFAULT_FILTERS["max_drawdown_pct"], 0.25)
 
     def test_accepts_candidate_meeting_criteria(self):
-        m = {"net_profit": 100.0, "profit_factor": 1.5, "win_rate": 0.60, "trade_count": 25}
+        m = {"net_profit": 100.0, "profit_factor": 1.5, "win_rate": 0.40, "trade_count": 25, "max_drawdown_pct": 0.25}
         self.assertTrue(passes_filters(m, DEFAULT_FILTERS))
 
     def test_rejects_boundary_failures(self):
-        base = {"net_profit": 100.0, "profit_factor": 1.5, "win_rate": 0.60, "trade_count": 25}
-        self.assertFalse(passes_filters({**base, "win_rate": 0.49}, DEFAULT_FILTERS))
-        self.assertFalse(passes_filters({**base, "profit_factor": 1.19}, DEFAULT_FILTERS))
+        base = {"net_profit": 100.0, "profit_factor": 1.5, "win_rate": 0.60, "trade_count": 25, "max_drawdown_pct": 0.20}
+        self.assertFalse(passes_filters({**base, "win_rate": 0.39}, DEFAULT_FILTERS))
+        self.assertFalse(passes_filters({**base, "profit_factor": 1.39}, DEFAULT_FILTERS))
         self.assertFalse(passes_filters({**base, "net_profit": 0.0}, DEFAULT_FILTERS))
         self.assertFalse(passes_filters({**base, "net_profit": -1.0}, DEFAULT_FILTERS))
         self.assertFalse(passes_filters({**base, "trade_count": 9}, DEFAULT_FILTERS))
+        self.assertFalse(passes_filters({**base, "max_drawdown_pct": 0.26}, DEFAULT_FILTERS))
 
     def test_filters_are_configurable(self):
-        m = {"net_profit": 100.0, "profit_factor": 1.1, "win_rate": 0.40, "trade_count": 5}
+        m = {"net_profit": 100.0, "profit_factor": 1.1, "win_rate": 0.40, "trade_count": 5, "max_drawdown_pct": 0.40}
         self.assertFalse(passes_filters(m, DEFAULT_FILTERS))
-        relaxed = {"min_win_rate": 0.30, "min_profit_factor": 1.0, "min_net_profit": 0.0, "min_trades": 1}
+        relaxed = {"min_win_rate": 0.30, "min_profit_factor": 1.0, "min_net_profit": 0.0, "min_trades": 1, "max_drawdown_pct": 0.50}
         self.assertTrue(passes_filters(m, relaxed))
 
 
 class StrongCandidateTests(unittest.TestCase):
     def test_default_thresholds(self):
-        self.assertEqual(STRONG_FILTERS["min_win_rate"], 0.45)
+        self.assertEqual(STRONG_FILTERS["min_win_rate"], 0.40)
         self.assertEqual(STRONG_FILTERS["min_profit_factor"], 1.4)
         self.assertEqual(STRONG_FILTERS["min_net_profit"], 0.0)
         self.assertIn("max_drawdown_pct", STRONG_FILTERS)
@@ -92,13 +94,33 @@ class StrongCandidateTests(unittest.TestCase):
     def test_rejects_weak_candidates(self):
         base = {"net_profit": 250.0, "profit_factor": 1.6, "win_rate": 0.52, "trade_count": 40, "max_drawdown_pct": 0.10}
         self.assertFalse(is_strong_candidate({**base, "profit_factor": 1.39}))
-        self.assertFalse(is_strong_candidate({**base, "win_rate": 0.44}))
+        self.assertFalse(is_strong_candidate({**base, "win_rate": 0.39}))
         self.assertFalse(is_strong_candidate({**base, "net_profit": 0.0}))
         self.assertFalse(is_strong_candidate({**base, "max_drawdown_pct": 0.40}))
 
     def test_drawdown_cap_configurable(self):
         m = {"net_profit": 250.0, "profit_factor": 1.6, "win_rate": 0.52, "trade_count": 40, "max_drawdown_pct": 0.40}
         self.assertTrue(is_strong_candidate(m, {"max_drawdown_pct": 0.50}))
+
+
+class PresetAndGroupingTests(unittest.TestCase):
+    def test_build_preset_grid_uses_single_values(self):
+        grid = _build_preset_grid("NVDA", "15m")
+        self.assertEqual(grid["stMultiplier"], [2.8])
+        self.assertEqual(grid["stPeriod"], [10])
+        self.assertEqual(grid["atrSLmult"], [1.4])
+        self.assertEqual(grid["atrTPmult"], [4.9])
+        self.assertEqual(grid["emaLen"], [88])
+
+    def test_group_tickers_by_symbol_preserves_timeframe_order(self):
+        grouped = _group_tickers_by_symbol([
+            {"symbol": "NVDA", "timeframe": "30m"},
+            {"symbol": "MU", "timeframe": "30m"},
+            {"symbol": "NVDA", "timeframe": "15m"},
+        ])
+        self.assertEqual(grouped[0][0], "NVDA")
+        self.assertEqual([item["timeframe"] for item in grouped[0][1]], ["15m", "30m"])
+        self.assertEqual(grouped[1][0], "MU")
 
 
 class DeriveSeedTests(unittest.TestCase):
@@ -189,7 +211,7 @@ class NeighborhoodGridTests(unittest.TestCase):
 
 
 class StagedSearchEndToEndTests(unittest.TestCase):
-    """Run the 3-stage pipeline against synthetic data in a temp CWD."""
+    """Run the 2-stage pipeline against synthetic data in a temp CWD."""
 
     GRID = {
         "stMultiplier": [1.6, 2.0],
@@ -222,19 +244,19 @@ class StagedSearchEndToEndTests(unittest.TestCase):
             max_exhaustive=100000,
             execution={"intrabar_path": "ohlc"},
             robustness={"enabled": False},
-            staged_cfg={"expand_radius": 1, "refine_radius": 0.2, "time_budget_split": [0.5, 0.3, 0.2]},
+            staged_cfg={"expand_radius": 1, "time_budget_split": [0.6, 0.4]},
         )
         kwargs.update(overrides)
         return staged_search(**kwargs)
 
-    def test_runs_all_three_stages(self):
+    def test_runs_both_stages(self):
         results = self._run()
-        self.assertEqual([r["phase"] for r in results], ["initial", "expanded", "refined"])
+        self.assertEqual([r["phase"] for r in results], ["initial", "expanded"])
 
     def test_final_candidate_meets_criteria(self):
         results = self._run()
         final = results[-1]
-        self.assertEqual(final["phase"], "refined")
+        self.assertEqual(final["phase"], "expanded")
         self.assertTrue(final["top"])
         best = final["top"][0]
         self.assertTrue(passes_filters(best["metrics"], DEFAULT_FILTERS))
@@ -249,7 +271,7 @@ class StagedSearchEndToEndTests(unittest.TestCase):
 
     def test_skips_later_stages_when_nothing_suitable(self):
         impossible = {"min_win_rate": 1.1, "min_profit_factor": 99.0, "min_net_profit": 0.0, "min_trades": 10}
-        results = self._run(staged_cfg={"filters": impossible, "time_budget_split": [0.5, 0.3, 0.2]})
+        results = self._run(staged_cfg={"filters": impossible, "time_budget_split": [0.6, 0.4]})
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["phase"], "initial")
         self.assertFalse(results[0]["top"])
@@ -259,20 +281,17 @@ class StagedSearchEndToEndTests(unittest.TestCase):
         self.assertTrue(all("strong_candidate_found" in r for r in results))
         self.assertTrue(any(r["strong_candidate_found"] for r in results))
 
-    def test_refined_skipped_without_strong_candidate(self):
-        # Suitable filters pass but the strong bar is unreachable, so the run
-        # stops after the expanded stage without refining further.
+    def test_stops_after_expanded_when_strong_bar_is_unreachable(self):
         unreachable_strong = {
             "strong_filters": {
-                "min_win_rate": 0.45,
+                "min_win_rate": 0.40,
                 "min_profit_factor": 1.4,
                 "min_net_profit": 0.0,
                 "min_trades": 10,
                 "max_drawdown_pct": -1.0,
             },
             "expand_radius": 1,
-            "refine_radius": 0.2,
-            "time_budget_split": [0.5, 0.3, 0.2],
+            "time_budget_split": [0.6, 0.4],
         }
         results = self._run(staged_cfg=unreachable_strong)
         self.assertEqual([r["phase"] for r in results], ["initial", "expanded"])
@@ -286,9 +305,7 @@ class StagedConfigTests(unittest.TestCase):
         self.assertTrue(staged["enabled"])
         self.assertEqual(staged["filters"], DEFAULT_FILTERS)
         self.assertEqual(staged["strong_filters"], STRONG_FILTERS)
-        self.assertTrue(staged["require_strong_candidate"])
         self.assertIn("expand_radius", staged)
-        self.assertIn("refine_radius", staged)
         self.assertIn("time_budget_split", staged)
         self.assertEqual(cfg["time_budget_seconds_per_ticker"], 3600)
 
@@ -302,15 +319,15 @@ class StagedConfigTests(unittest.TestCase):
             os.chdir(old_cwd)
         staged = cfg["staged_search"]
         self.assertTrue(staged["enabled"])
-        self.assertEqual(staged["filters"]["min_win_rate"], 0.45)
+        self.assertEqual(staged["filters"]["min_win_rate"], 0.40)
         self.assertEqual(staged["filters"]["min_profit_factor"], 1.4)
         self.assertEqual(staged["filters"]["min_net_profit"], 0.0)
+        self.assertEqual(staged["filters"]["max_drawdown_pct"], 0.25)
         strong = staged["strong_filters"]
-        self.assertEqual(strong["min_win_rate"], 0.45)
+        self.assertEqual(strong["min_win_rate"], 0.40)
         self.assertEqual(strong["min_profit_factor"], 1.4)
         self.assertEqual(strong["min_net_profit"], 0.0)
         self.assertEqual(strong["max_drawdown_pct"], 0.25)
-        self.assertTrue(staged["require_strong_candidate"])
 
     def test_merge_preserves_user_overrides(self):
         cfg = merge_with_defaults({"staged_search": {"enabled": False, "expand_radius": 3.0}})

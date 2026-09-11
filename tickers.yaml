@@ -1,13 +1,14 @@
 # backtesting configuration
-# Workflow: data sanity -> parity check -> staged search per ticker/timeframe -> robustness validation
-# Staged search runs for every ticker entry below (each ticker at 15m and 30m):
+# Workflow: data sanity -> parity check -> preset check -> staged search per ticker/timeframe -> robustness validation
+# Staged search runs one symbol at a time for every ticker entry below:
 #   1) initial  - random samples of the wide base grid (grid_constrained), seeded
 #                 per ticker so parallel workers explore different grid points
 #   2) expanded - grid narrowed around the best suitable candidate from stage 1
-#   3) refined  - grid narrowed further around the top expanded candidate
-# A ticker is only treated as finished once a strong candidate has been found
-# (positive net profit, PF >= 1.4, WR >= 45%, low drawdown) or its ~1h budget
-# is exhausted; the optimizer then moves on to the next ticker below.
+#   3) gate     - review the current candidates, then either move on or keep
+#                 widening the expanded search on the current ticker
+# A ticker is only treated as ready to move on once it has a suitable candidate
+# (positive net profit, PF >= 1.4, WR >= 40%, low drawdown) and you approve the
+# prompt to continue to the next ticker below.
 
 tickers:
   - symbol: NVDA
@@ -465,34 +466,31 @@ top_k_per_ticker: 5
 # about an hour per ticker/timeframe entry to allow as many finds as possible
 time_budget_seconds_per_ticker: 3600
 
-# staged search: initial random grid -> expanded grid around the best suitable
-# candidate -> refined grid around the top expanded candidate.
+# staged search: preset check -> initial random grid -> expanded grid around
+# the best suitable candidate.
 # A candidate is suitable when it passes all filters; candidates are ranked by
-# score, preferring lower drawdown on ties. The refined stage only runs once a
-# strong candidate (see strong_filters below) has been found, and with
-# require_strong_candidate: true a ticker gets another budgeted pass until the
-# strong bar is cleared before the optimizer moves on to the next ticker.
+# score, preferring lower drawdown on ties. optimize_all.py now runs one symbol
+# at a time, evaluates the available timeframe presets first, and prompts
+# before moving to the next ticker. If you answer "no" to the suitability
+# prompt, it keeps widening the expanded search on the current ticker.
 # Set enabled: false to fall back to the legacy constrained/fallback/expanded phases.
 staged_search:
   enabled: true
   filters:
-    min_win_rate: 0.45        # at least 45% win rate
+    min_win_rate: 0.40        # at least 40% win rate
     min_profit_factor: 1.4    # profit factor of at least 1.4
     min_net_profit: 0.0       # strictly positive net profit
     min_trades: 10
-  # strong-candidate bar: a ticker is only finished once a candidate clears
-  # these thresholds (or the budget is exhausted)
+    max_drawdown_pct: 0.25    # low max drawdown (<= 25%)
+  # strong-candidate bar used by the interactive gating summary
   strong_filters:
-    min_win_rate: 0.45            # at least 45% win rate
+    min_win_rate: 0.40            # at least 40% win rate
     min_profit_factor: 1.4        # profit factor of at least 1.4
     min_net_profit: 0.0           # strictly positive net profit
     min_trades: 10
-    max_drawdown_pct: 0.25        # reasonably low max drawdown (<= 25%)
-  require_strong_candidate: true  # do not finish a ticker until a strong candidate is found
-  max_retries_per_ticker: 1       # extra budgeted passes per ticker without a strong candidate
+    max_drawdown_pct: 0.25        # low max drawdown (<= 25%)
   expand_radius: 2.0          # expanded stage spans +/- radius grid steps per parameter
-  refine_radius: 1.0          # refined stage spans +/- radius grid steps per parameter
-  time_budget_split: [0.5, 0.3, 0.2]  # share of the per-ticker budget per stage
+  time_budget_split: [0.6, 0.4]  # share of the per-ticker budget per stage
 
 # optional post-optimization stability check on top candidates
 robustness:

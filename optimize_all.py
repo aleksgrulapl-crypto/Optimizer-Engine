@@ -4,19 +4,11 @@ Orchestrator with parity gating and per-ticker staged optimization.
 Flow:
 1) Data sanity checks (timeframe file exists + non-empty candles)
 2) Parity gate checks (tv_export exists and parity_ok=true when enabled)
-3) Initial random grid search over a wide, loose base grid (per ticker and
-   timeframe; per-ticker seeds spread sampled points across workers to take
-   pressure off the CPU)
-4) Expanded grid around the best suitable candidate
-5) Refined grid around the top expanded candidate (only once a strong
-   candidate exists)
-6) Robustness-filtered top candidates returned by worker
-
-A ticker/timeframe run is only treated as finished once a strong candidate
-has been found — positive net profit, profit factor >= 1.4, win rate >= 45%
-and a reasonably low drawdown — or its time budget (about an hour by
-default) is exhausted; the optimizer then moves on to the next ticker from
-the config, which covers both the 15m and 30m timeframes per ticker.
+3) Per-symbol preset checks across the available 15m/30m entries
+4) Initial random grid search over a wide, loose base grid
+5) Expanded grid around the best suitable candidate
+6) Manual gating before moving to the next ticker
+7) Robustness-filtered top candidates returned by worker
 """
 
 import json
@@ -36,7 +28,8 @@ except Exception:
     yaml = None  # type: ignore
     _HAS_YAML = False
 
-from optimizer_worker import DEFAULT_FILTERS, STRONG_FILTERS, optimize_ticker, staged_search
+from optimizer_worker import DEFAULT_FILTERS, STRONG_FILTERS, is_strong_candidate, optimize_ticker, staged_search
+from presets import get_presets, normalize_timeframe
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "tickers": [],
@@ -76,16 +69,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "reject_if_any_segment_pf_below": 1.0,
         "reject_if_any_segment_net_profit_below_or_equal": 0.0,
     },
-    # Staged search per ticker/timeframe: initial random grid -> expanded grid
-    # around the best suitable candidate -> refined grid around the top expanded candidate.
+    # Staged search per ticker/timeframe: preset check -> initial random grid
+    # -> expanded grid around the best suitable candidate.
     "staged_search": {
         "enabled": True,
         "filters": dict(DEFAULT_FILTERS),
         "strong_filters": dict(STRONG_FILTERS),
-        "require_strong_candidate": True,
         "expand_radius": 2.0,
-        "refine_radius": 1.0,
-        "time_budget_split": [0.5, 0.3, 0.2],
+        "time_budget_split": [0.6, 0.4],
     },
 }
 
@@ -192,6 +183,141 @@ def _write_progress_rows(out_path: Path, rows: List[List[Any]]) -> None:
             w.writerow(r)
 
 
+def _timeframe_sort_key(timeframe: Any) -> Tuple[int, str]:
+    tf = str(timeframe or "").strip().lower()
+    order = {"15m": 0, "30m": 1}
+    return order.get(tf, 99), tf
+
+
+def _group_tickers_by_symbol(tickers: List[Dict[str, Any]]) -> List[Tuple[str, List[Dict[str, Any]]]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for ticker in tickers:
+        symbol = str(ticker.get("symbol", "")).strip().upper()
+        grouped.setdefault(symbol, []).append(ticker)
+    return [
+        (symbol, sorted(entries, key=lambda item: _timeframe_sort_key(item.get("timeframe"))))
+        for symbol, entries in grouped.items()
+    ]
+
+
+def _mark_suitable(result: Dict[str, Any], strong_filters: Dict[str, Any]) -> Dict[str, Any]:
+    top = result.get("top", []) or []
+    result["strong_candidate_found"] = any(
+        is_strong_candidate(candidate.get("metrics", {}) or {}, strong_filters) for candidate in top
+    )
+    return result
+
+
+def _append_progress_row(progress_rows: List[List[Any]], result: Dict[str, Any]) -> None:
+    symbol = result.get("symbol", "")
+    top = result.get("top", []) or []
+    top_score = top[0].get("score", "") if top else ""
+    note = result.get("note", "")
+    if result.get("strong_candidate_found"):
+        note = (note + "; " if note else "") + "suitable candidate found"
+    progress_rows.append([
+        symbol,
+        result.get("phase", ""),
+        "done",
+        result.get("evaluated", 0),
+        round(float(result.get("elapsed_seconds", 0.0)), 2),
+        top_score,
+        note,
+    ])
+
+
+def _build_preset_grid(symbol: str, timeframe: Any) -> Dict[str, List[Any]]:
+    preset = get_presets(symbol, normalize_timeframe(str(timeframe or "15m")))
+    return {key: [value] for key, value in preset.items()}
+
+
+def _prompt_yes_no(message: str) -> bool:
+    while True:
+        reply = input(f"{message} [y/n]: ").strip().lower()
+        if reply in {"y", "yes"}:
+            return True
+        if reply in {"n", "no"}:
+            return False
+        print("Please answer y or n.")
+
+
+def _print_symbol_summary(symbol: str, results: List[Dict[str, Any]]) -> None:
+    print(f"\n{symbol} summary:")
+    for result in results:
+        timeframe = str(result.get("timeframe", "")).strip().lower()
+        phase = result.get("phase", "")
+        top = result.get("top", []) or []
+        if not top:
+            print(f"  - {timeframe or 'n/a'} [{phase}]: no suitable candidates")
+            continue
+        best = top[0]
+        metrics = best.get("metrics", {}) or {}
+        print(
+            "  - "
+            f"{timeframe or 'n/a'} [{phase}]: "
+            f"net={metrics.get('net_profit', 0.0):.2f}, "
+            f"pf={metrics.get('profit_factor', 0.0):.2f}, "
+            f"wr={float(metrics.get('win_rate', 0.0)) * 100:.1f}%, "
+            f"dd={float(metrics.get('max_drawdown_pct', 0.0)) * 100:.2f}%"
+        )
+
+
+def _run_preset_phase(ticker: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    symbol = str(ticker.get("symbol", "")).strip().upper()
+    timeframe = ticker.get("timeframe")
+    strong_filters = {**STRONG_FILTERS, **((cfg.get("staged_search", {}) or {}).get("strong_filters", {}) or {})}
+    try:
+        preset_grid = _build_preset_grid(symbol, timeframe)
+    except Exception as exc:
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "phase": "preset",
+            "top": [],
+            "evaluated": 0,
+            "elapsed_seconds": 0.0,
+            "note": f"preset skipped ({exc})",
+            "strong_candidate_found": False,
+        }
+
+    result = optimize_ticker(
+        ticker,
+        preset_grid,
+        [str((cfg.get("execution", {}) or {}).get("intrabar_path", "ohlc"))],
+        top_k=int(cfg.get("top_k_per_ticker", 5)),
+        time_budget=int(cfg.get("time_budget_seconds_per_ticker", 3600)),
+        search_mode="auto",
+        n_samples=1,
+        seed=int(cfg.get("random_seed", 0)),
+        max_exhaustive=int(cfg.get("max_exhaustive", 150000)),
+        execution=(cfg.get("execution", {}) or {}),
+        robustness=(cfg.get("robustness", {}) or {}),
+        phase="preset",
+        filters=((cfg.get("staged_search", {}) or {}).get("filters", None) or None),
+    )
+    return _mark_suitable(result, strong_filters)
+
+
+def _run_staged_cycle(ticker: Dict[str, Any], grid: Dict[str, Any], cfg: Dict[str, Any], cycle_index: int) -> List[Dict[str, Any]]:
+    n_samples = int(cfg.get("n_samples_per_ticker", cfg.get("n_samples", 1000)))
+    staged_cfg = dict(cfg.get("staged_search", {}) or {})
+    staged_cfg["expand_radius"] = float(staged_cfg.get("expand_radius", 2.0)) * max(1, cycle_index + 1)
+    staged_cfg["expand_samples"] = max(n_samples, int(staged_cfg.get("expand_samples", 2 * n_samples))) * max(1, cycle_index + 1)
+    return staged_search(
+        ticker,
+        grid,
+        [str((cfg.get("execution", {}) or {}).get("intrabar_path", "ohlc"))],
+        top_k=int(cfg.get("top_k_per_ticker", 5)),
+        time_budget=int(cfg.get("time_budget_seconds_per_ticker", 3600)),
+        n_samples=n_samples,
+        seed=int(cfg.get("random_seed", 0)) + (cycle_index * 100003),
+        max_exhaustive=int(cfg.get("max_exhaustive", 150000)),
+        execution=(cfg.get("execution", {}) or {}),
+        robustness=(cfg.get("robustness", {}) or {}),
+        staged_cfg=staged_cfg,
+    )
+
+
 def _run_phase(
     phase_name: str,
     phase_tickers: List[Dict[str, Any]],
@@ -223,15 +349,7 @@ def _run_staged_search(
     grid: Dict[str, Any],
     cfg: Dict[str, Any],
 ) -> List[List[Dict[str, Any]]]:
-    """Run the staged search (initial random -> expanded -> refined) per ticker/timeframe.
-
-    When ``staged_search.require_strong_candidate`` is enabled, tickers whose
-    strong-candidate bar (positive net profit, PF >= 1.4, WR >= 45%, low
-    drawdown) was not cleared within their budget get a second pass with the
-    remaining tickers before the optimizer moves on — a ticker is only
-    considered finished once a strong candidate has been found or every
-    budgeted pass over it is exhausted.
-    """
+    """Run the staged search (initial random -> expanded) per ticker/timeframe."""
     workers = int(cfg.get("parallel_workers", 2))
     top_k = int(cfg.get("top_k_per_ticker", 5))
     time_budget = int(cfg.get("time_budget_seconds_per_ticker", 3600))
@@ -242,38 +360,11 @@ def _run_staged_search(
     intrabar_paths = [execution.get("intrabar_path", "ohlc")]
     robustness = cfg.get("robustness", {}) or {}
     staged_cfg = cfg.get("staged_search", {}) or {}
-    require_strong = bool(staged_cfg.get("require_strong_candidate", True))
-    max_retries = int(staged_cfg.get("max_retries_per_ticker", 1)) if require_strong else 0
-
-    results: Dict[int, List[Dict[str, Any]]] = {}
-    pending = list(range(len(tickers)))
-    attempt = 0
-
-    def _found_strong(stage_list: List[Dict[str, Any]]) -> bool:
-        return any(bool(r.get("strong_candidate_found")) for r in stage_list)
-
-    while pending:
-        attempt += 1
-        if attempt > 1:
-            # Resume files skip already-evaluated combos, so each extra pass
-            # spends the ticker's budget exploring fresh parameter space.
-            print(f"Strong candidate not found for {len(pending)} ticker/timeframe entries; re-running with fresh budget (pass {attempt})")
-        args = []
-        for i in pending:
-            t = tickers[i]
-            args.append((t, grid, intrabar_paths, top_k, time_budget, n_samples, seed, max_exhaustive, execution, robustness, staged_cfg))
-        with Pool(workers) as pool:
-            pass_results = pool.starmap(staged_search, args)
-        still_pending: List[int] = []
-        for i, stage_list in zip(pending, pass_results):
-            results[i] = stage_list
-            if require_strong and not _found_strong(stage_list) and attempt <= max_retries:
-                still_pending.append(i)
-        if not require_strong or not still_pending:
-            break
-        pending = still_pending
-
-    return [results.get(i, []) for i in range(len(tickers))]
+    args = []
+    for ticker in tickers:
+        args.append((ticker, grid, intrabar_paths, top_k, time_budget, n_samples, seed, max_exhaustive, execution, robustness, staged_cfg))
+    with Pool(workers) as pool:
+        return pool.starmap(staged_search, args)
 
 
 def _run_legacy_phases(
@@ -387,19 +478,43 @@ def main() -> None:
     staged_cfg = cfg.get("staged_search", {}) or {}
     if bool(staged_cfg.get("enabled", True)):
         base_grid = cfg.get("grid_constrained") or cfg.get("grid") or {}
-        print(f"Starting staged search for {len(gated_tickers)} ticker/timeframe entries")
-        stage_results = _run_staged_search(gated_tickers, base_grid, cfg)
         final_results: List[Dict[str, Any]] = []
-        for stage_list in stage_results:
-            final_results.append(stage_list[-1] if stage_list else {})
-            for r in stage_list:
-                symbol = r.get("symbol", "")
-                top = r.get("top", []) or []
-                top_score = top[0].get("score", "") if top else ""
-                note = r.get("note", "")
-                if r.get("strong_candidate_found"):
-                    note = (note + "; " if note else "") + "strong candidate found"
-                progress_rows.append([symbol, r.get("phase", ""), "done", r.get("evaluated", 0), round(float(r.get("elapsed_seconds", 0.0)), 2), top_score, note])
+        symbol_groups = _group_tickers_by_symbol(gated_tickers)
+        print(f"Starting staged search for {len(symbol_groups)} ticker(s)")
+        for symbol, symbol_tickers in symbol_groups:
+            latest_by_timeframe: Dict[str, Dict[str, Any]] = {}
+            print(f"\nStarting {symbol} with {len(symbol_tickers)} timeframe preset(s)")
+            for ticker in symbol_tickers:
+                preset_result = _run_preset_phase(ticker, cfg)
+                latest_by_timeframe[str(ticker.get('timeframe', '')).strip().lower()] = preset_result
+                _append_progress_row(progress_rows, preset_result)
+
+            cycle_index = 0
+            while True:
+                cycle_results: List[Dict[str, Any]] = []
+                print(f"{symbol}: staged cycle {cycle_index + 1}")
+                for ticker in symbol_tickers:
+                    stage_list = _run_staged_cycle(ticker, base_grid, cfg, cycle_index)
+                    for result in stage_list:
+                        _append_progress_row(progress_rows, result)
+                    final_result = stage_list[-1] if stage_list else {}
+                    timeframe_key = str(ticker.get("timeframe", "")).strip().lower()
+                    if final_result:
+                        latest_by_timeframe[timeframe_key] = final_result
+                        cycle_results.append(final_result)
+                    elif timeframe_key in latest_by_timeframe:
+                        cycle_results.append(latest_by_timeframe[timeframe_key])
+
+                summarized_results = [latest_by_timeframe[key] for key in sorted(latest_by_timeframe.keys(), key=_timeframe_sort_key)]
+                _print_symbol_summary(symbol, summarized_results)
+                suitable_found = any(bool(result.get("strong_candidate_found")) for result in summarized_results)
+                print(f"{symbol}: optimizer {'found' if suitable_found else 'did not find'} a suitable candidate under the current acceptance filters.")
+                if _prompt_yes_no(f"{symbol}: are the current candidates suitable"):
+                    if _prompt_yes_no(f"{symbol}: move to the next ticker"):
+                        final_results.extend(summarized_results)
+                        break
+                cycle_index += 1
+                print(f"{symbol}: continuing with a wider expanded search.")
     else:
         final_results = _run_legacy_phases(gated_tickers, cfg, progress_rows)
 
