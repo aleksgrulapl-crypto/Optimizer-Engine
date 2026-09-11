@@ -120,14 +120,14 @@ class PresetAndGroupingTests(unittest.TestCase):
         self.assertEqual(grid["atrTPmult"], [6.3])
         self.assertEqual(grid["emaLen"], [55])
 
-    def test_group_tickers_by_symbol_preserves_timeframe_order(self):
+    def test_group_tickers_by_symbol_normalizes_timeframe_order(self):
         grouped = _group_tickers_by_symbol([
             {"symbol": "NVDA", "timeframe": "30m"},
             {"symbol": "MU", "timeframe": "30m"},
             {"symbol": "NVDA", "timeframe": "15m"},
         ])
         self.assertEqual(grouped[0][0], "NVDA")
-        self.assertEqual([item["timeframe"] for item in grouped[0][1]], ["30m", "15m"])
+        self.assertEqual([item["timeframe"] for item in grouped[0][1]], ["15m", "30m"])
         self.assertEqual(grouped[1][0], "MU")
 
     def test_run_preset_phase_marks_unsupported_symbols_as_skipped(self):

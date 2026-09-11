@@ -14,6 +14,7 @@ Flow:
 import json
 import csv
 import re
+import sys
 from multiprocessing import Pool
 from pathlib import Path
 from time import time
@@ -194,7 +195,10 @@ def _group_tickers_by_symbol(tickers: List[Dict[str, Any]]) -> List[Tuple[str, L
     for ticker in tickers:
         symbol = str(ticker.get("symbol", "")).strip().upper()
         grouped.setdefault(symbol, []).append(ticker)
-    return list(grouped.items())
+    return [
+        (symbol, sorted(entries, key=lambda item: _timeframe_sort_key(item.get("timeframe"))))
+        for symbol, entries in grouped.items()
+    ]
 
 
 def _mark_suitable(result: Dict[str, Any], strong_filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -228,9 +232,18 @@ def _build_preset_grid(symbol: str, timeframe: Any) -> Dict[str, List[Any]]:
     return {key: [value] for key, value in preset.items()}
 
 
-def _prompt_yes_no(message: str) -> bool:
+def _prompt_yes_no(message: str, default: Any = None) -> bool:
+    prompt = f"{message} [y/n]: " if default is None else f"{message} [{'Y' if default else 'y'}/{'n' if default else 'N'}]: "
     while True:
-        reply = input(f"{message} [y/n]: ").strip().lower()
+        try:
+            reply = input(prompt).strip().lower()
+        except EOFError:
+            if default is None:
+                raise RuntimeError(f"No interactive input available for prompt: {message}")
+            print(f"{message}: no interactive input available; defaulting to {'yes' if default else 'no'}.")
+            return bool(default)
+        if not reply and default is not None:
+            return bool(default)
         if reply in {"y", "yes"}:
             return True
         if reply in {"n", "no"}:
@@ -326,6 +339,10 @@ def _run_expanded_cycle(
     strong_filters = {**STRONG_FILTERS, **(staged_cfg.get("strong_filters", {}) or {})}
     expand_radius = float(staged_cfg.get("expand_radius", 2.0)) * max(2, cycle_index + 1)
     expand_samples = max(n_samples, int(staged_cfg.get("expand_samples", 2 * n_samples))) * max(2, cycle_index + 1)
+    budget_split = [float(x) for x in (staged_cfg.get("time_budget_split", [0.6, 0.4]) or [0.6, 0.4])]
+    total_weight = sum(budget_split) or 1.0
+    expanded_weight = budget_split[1] if len(budget_split) > 1 else budget_split[-1]
+    expanded_budget = max(1, int(int(cfg.get("time_budget_seconds_per_ticker", 3600)) * expanded_weight / total_weight))
     center = {}
     top = (previous_result or {}).get("top", []) or []
     if top:
@@ -355,7 +372,7 @@ def _run_expanded_cycle(
         build_neighborhood_grid(grid, center, expand_radius),
         [str((cfg.get("execution", {}) or {}).get("intrabar_path", "ohlc"))],
         top_k=int(cfg.get("top_k_per_ticker", 5)),
-        time_budget=int(cfg.get("time_budget_seconds_per_ticker", 3600)),
+        time_budget=expanded_budget,
         search_mode="sample",
         n_samples=expand_samples,
         seed=derive_seed(
@@ -535,6 +552,7 @@ def main() -> None:
         final_results: List[Dict[str, Any]] = []
         symbol_groups = _group_tickers_by_symbol(gated_tickers)
         stop_after_current = False
+        interactive_prompts = sys.stdin.isatty()
         print(f"Starting staged search for {len(symbol_groups)} ticker(s)")
         for symbol, symbol_tickers in symbol_groups:
             latest_by_timeframe: Dict[str, Dict[str, Any]] = {}
@@ -569,9 +587,14 @@ def main() -> None:
                 summarized_results = [latest_by_timeframe[key] for key in sorted(latest_by_timeframe.keys(), key=_timeframe_sort_key)]
                 _print_symbol_summary(symbol, summarized_results)
                 suitable_found = any(bool(result.get("strong_candidate_found")) for result in summarized_results)
-                print(f"{symbol}: optimizer {'found' if suitable_found else 'did not find'} a suitable candidate under the current acceptance filters.")
-                if _prompt_yes_no(f"{symbol}: are the current candidates suitable"):
-                    if _prompt_yes_no(f"{symbol}: move to the next ticker"):
+                print(f"{symbol}: optimizer {'found' if suitable_found else 'did not find'} a candidate that meets the gating thresholds.")
+                if not interactive_prompts and not suitable_found:
+                    print(f"{symbol}: no interactive input available and no gated candidate found; stopping after the current ticker.")
+                    final_results.extend(summarized_results)
+                    stop_after_current = True
+                    break
+                if _prompt_yes_no(f"{symbol}: are the current candidates suitable", default=suitable_found):
+                    if _prompt_yes_no(f"{symbol}: move to the next ticker", default=suitable_found):
                         final_results.extend(summarized_results)
                         break
                     print(f"{symbol}: current candidates kept; stopping before the next ticker.")
