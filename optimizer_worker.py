@@ -235,6 +235,7 @@ def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
     net = float(metrics.get("net_profit", 0.0))
     wr = float(metrics.get("win_rate", 0.0))
     tc = int(metrics.get("trade_count", 0))
+    dd_pct = float(metrics.get("max_drawdown_pct", 0.0))
     if net <= float(filters.get("min_net_profit", 0.0)):
         return False
     if pf < float(filters.get("min_profit_factor", 1.2)):
@@ -242,6 +243,9 @@ def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
     if wr < float(filters.get("min_win_rate", 0.50)):
         return False
     if tc < int(filters.get("min_trades", 10)):
+        return False
+    max_dd_pct = filters.get("max_drawdown_pct", None)
+    if max_dd_pct is not None and dd_pct > float(max_dd_pct):
         return False
     return True
 

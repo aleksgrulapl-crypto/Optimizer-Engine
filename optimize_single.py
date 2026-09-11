@@ -18,6 +18,14 @@ from optimize_all import _write_progress_rows as write_progress_rows
 from optimizer_worker import optimize_ticker
 from presets import get_presets, normalize_timeframe
 
+REFINEMENT_FILTERS = {
+    "min_win_rate": 0.50,
+    "min_profit_factor": 1.4,
+    "min_net_profit": 0.0,
+    "min_trades": 10,
+    "max_drawdown_pct": 0.25,
+}
+
 
 def _safe_float(v: Any, default: float) -> float:
     try:
@@ -52,10 +60,10 @@ def _build_refinement_grid(base: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "stMultiplier": _frange(max(0.2, st_mult - 0.4), st_mult + 0.4, 0.1),
-        "stPeriod": list(range(max(2, st_period - 3), st_period + 4)),
-        "atrSLmult": _frange(max(0.2, atr_sl - 0.3), atr_sl + 0.3, 0.1),
-        "atrTPmult": _frange(max(0.5, atr_tp - 0.8), atr_tp + 0.8, 0.2),
-        "emaLen": list(range(max(5, ema_len - 30), ema_len + 31, 10)),
+        "stPeriod": list(range(max(2, st_period - 1), st_period + 2)),
+        "atrSLmult": _frange(max(0.2, atr_sl - 0.2), atr_sl + 0.2, 0.1),
+        "atrTPmult": _frange(max(0.5, atr_tp - 0.5), atr_tp + 0.5, 0.1),
+        "emaLen": list(range(max(5, ema_len - 10), ema_len + 11)),
     }
 
 
@@ -151,6 +159,7 @@ def main() -> None:
             execution=(cfg.get("execution", {}) or {}),
             robustness=(cfg.get("robustness", {}) or {}),
             phase=phase,
+            filters=REFINEMENT_FILTERS,
         )
 
         top = result.get("top", []) or []

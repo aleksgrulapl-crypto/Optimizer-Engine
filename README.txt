@@ -71,7 +71,12 @@ constrained/fallback/expanded phases.
 
    This command runs a focused grid around the timeframe-specific values in
    presets.py. If both 15m and 30m TSVs are available for the symbol, refinement
-   runs once per timeframe and writes timeframe-specific output files.
+   runs once per timeframe and writes timeframe-specific output files. The
+   refinement grid narrows around each preset with these fixed windows:
+   stMultiplier ±0.4 by 0.1, stPeriod ±1 by 1, atrSLmult ±0.2 by 0.1,
+   atrTPmult ±0.5 by 0.1, and emaLen ±10 by 1. Single-ticker refinement keeps
+   only candidates with positive net profit, win rate >= 50%, profit factor >=
+   1.4, at least 10 trades, and max drawdown <= 25%.
 
 Outputs:
 - optimizer_results/best_{SYMBOL}_initial.csv
