@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import optimizer_worker as ow
-from optimize_all import _build_preset_grid, _group_tickers_by_symbol, merge_with_defaults
+from optimize_all import _build_preset_grid, _group_tickers_by_symbol, _run_preset_phase, merge_with_defaults
 from optimizer_worker import (
     DEFAULT_FILTERS,
     STRONG_FILTERS,
@@ -121,6 +121,13 @@ class PresetAndGroupingTests(unittest.TestCase):
         self.assertEqual(grouped[0][0], "NVDA")
         self.assertEqual([item["timeframe"] for item in grouped[0][1]], ["15m", "30m"])
         self.assertEqual(grouped[1][0], "MU")
+
+    def test_run_preset_phase_marks_unsupported_symbols_as_skipped(self):
+        result = _run_preset_phase({"symbol": "UNKNOWN", "timeframe": "15m"}, {"staged_search": {}})
+        self.assertEqual(result["phase"], "preset")
+        self.assertFalse(result["top"])
+        self.assertFalse(result["strong_candidate_found"])
+        self.assertIn("preset skipped", result["note"])
 
 
 class DeriveSeedTests(unittest.TestCase):

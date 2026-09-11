@@ -28,8 +28,8 @@ DEFAULT_FILTERS: Dict[str, Any] = {
 # Strong-candidate bar: a ticker/timeframe run is only considered complete
 # once at least one candidate clears these thresholds — strictly positive net
 # profit, profit factor >= 1.4, win rate >= 40% and a reasonably low max
-# drawdown. The optimizer does not treat a ticker as finished until a strong
-# candidate has been found (or its time budget is exhausted).
+# drawdown. The orchestrator uses this bar to summarize whether a ticker is
+# ready to move on.
 STRONG_FILTERS: Dict[str, Any] = {
     "min_win_rate": 0.40,
     "min_profit_factor": 1.4,

@@ -28,7 +28,7 @@ except Exception:
     yaml = None  # type: ignore
     _HAS_YAML = False
 
-from optimizer_worker import DEFAULT_FILTERS, STRONG_FILTERS, is_strong_candidate, optimize_ticker, staged_search
+from optimizer_worker import DEFAULT_FILTERS, STRONG_FILTERS, build_neighborhood_grid, is_strong_candidate, optimize_ticker, staged_search
 from presets import get_presets, normalize_timeframe
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -318,6 +318,60 @@ def _run_staged_cycle(ticker: Dict[str, Any], grid: Dict[str, Any], cfg: Dict[st
     )
 
 
+def _run_expanded_cycle(
+    ticker: Dict[str, Any],
+    grid: Dict[str, Any],
+    cfg: Dict[str, Any],
+    cycle_index: int,
+    previous_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    n_samples = int(cfg.get("n_samples_per_ticker", cfg.get("n_samples", 1000)))
+    staged_cfg = dict(cfg.get("staged_search", {}) or {})
+    strong_filters = {**STRONG_FILTERS, **(staged_cfg.get("strong_filters", {}) or {})}
+    expand_radius = float(staged_cfg.get("expand_radius", 2.0)) * max(2, cycle_index + 1)
+    expand_samples = max(n_samples, int(staged_cfg.get("expand_samples", 2 * n_samples))) * max(2, cycle_index + 1)
+    center = {}
+    top = (previous_result or {}).get("top", []) or []
+    if top:
+        center = top[0].get("params", {}) or {}
+    if not center:
+        try:
+            center = get_presets(
+                str(ticker.get("symbol", "")).strip().upper(),
+                normalize_timeframe(str(ticker.get("timeframe", "15m"))),
+            )
+        except Exception:
+            center = {}
+    if not center:
+        return {
+            "symbol": ticker.get("symbol", ""),
+            "timeframe": ticker.get("timeframe"),
+            "phase": "expanded",
+            "top": [],
+            "evaluated": 0,
+            "elapsed_seconds": 0.0,
+            "note": "expanded search skipped (no center parameters available)",
+            "strong_candidate_found": False,
+        }
+
+    result = optimize_ticker(
+        ticker,
+        build_neighborhood_grid(grid, center, expand_radius),
+        [str((cfg.get("execution", {}) or {}).get("intrabar_path", "ohlc"))],
+        top_k=int(cfg.get("top_k_per_ticker", 5)),
+        time_budget=int(cfg.get("time_budget_seconds_per_ticker", 3600)),
+        search_mode="sample",
+        n_samples=expand_samples,
+        seed=int(cfg.get("random_seed", 0)) + (cycle_index * 100003),
+        max_exhaustive=int(cfg.get("max_exhaustive", 150000)),
+        execution=(cfg.get("execution", {}) or {}),
+        robustness=(cfg.get("robustness", {}) or {}),
+        phase="expanded",
+        filters=(staged_cfg.get("filters", None) or None),
+    )
+    return _mark_suitable(result, strong_filters)
+
+
 def _run_phase(
     phase_name: str,
     phase_tickers: List[Dict[str, Any]],
@@ -491,28 +545,35 @@ def main() -> None:
 
             cycle_index = 0
             while True:
-                cycle_results: List[Dict[str, Any]] = []
                 print(f"{symbol}: staged cycle {cycle_index + 1}")
                 for ticker in symbol_tickers:
-                    stage_list = _run_staged_cycle(ticker, base_grid, cfg, cycle_index)
-                    for result in stage_list:
-                        _append_progress_row(progress_rows, result)
-                    final_result = stage_list[-1] if stage_list else {}
                     timeframe_key = str(ticker.get("timeframe", "")).strip().lower()
+                    if cycle_index == 0:
+                        stage_list = _run_staged_cycle(ticker, base_grid, cfg, cycle_index)
+                        for result in stage_list:
+                            _append_progress_row(progress_rows, result)
+                        final_result = stage_list[-1] if stage_list else {}
+                    else:
+                        final_result = _run_expanded_cycle(
+                            ticker,
+                            base_grid,
+                            cfg,
+                            cycle_index,
+                            latest_by_timeframe.get(timeframe_key, {}),
+                        )
+                        _append_progress_row(progress_rows, final_result)
                     if final_result:
                         latest_by_timeframe[timeframe_key] = final_result
-                        cycle_results.append(final_result)
-                    elif timeframe_key in latest_by_timeframe:
-                        cycle_results.append(latest_by_timeframe[timeframe_key])
 
                 summarized_results = [latest_by_timeframe[key] for key in sorted(latest_by_timeframe.keys(), key=_timeframe_sort_key)]
                 _print_symbol_summary(symbol, summarized_results)
                 suitable_found = any(bool(result.get("strong_candidate_found")) for result in summarized_results)
                 print(f"{symbol}: optimizer {'found' if suitable_found else 'did not find'} a suitable candidate under the current acceptance filters.")
                 if _prompt_yes_no(f"{symbol}: are the current candidates suitable"):
-                    if _prompt_yes_no(f"{symbol}: move to the next ticker"):
-                        final_results.extend(summarized_results)
-                        break
+                    while not _prompt_yes_no(f"{symbol}: move to the next ticker"):
+                        print(f"{symbol}: staying on the current ticker until you approve moving on.")
+                    final_results.extend(summarized_results)
+                    break
                 cycle_index += 1
                 print(f"{symbol}: continuing with a wider expanded search.")
     else:
