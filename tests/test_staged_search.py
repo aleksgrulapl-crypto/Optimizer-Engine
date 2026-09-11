@@ -185,6 +185,45 @@ class PresetAndGroupingTests(unittest.TestCase):
         self.assertEqual(kwargs["phase"], "preset")
         self.assertEqual(kwargs["filters"], {"min_win_rate": 0.40})
 
+    def test_run_preset_phase_can_fail_strong_thresholds(self):
+        ticker = {"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"}
+        mocked_result = {
+            "symbol": "NVDA",
+            "timeframe": "15m",
+            "phase": "preset",
+            "top": [{
+                "params": {"stMultiplier": 2.0},
+                "metrics": {
+                    "net_profit": 100.0,
+                    "profit_factor": 1.5,
+                    "win_rate": 0.45,
+                    "trade_count": 12,
+                    "max_drawdown_pct": 0.20,
+                },
+            }],
+            "evaluated": 1,
+            "elapsed_seconds": 0.01,
+            "note": "ok",
+        }
+        cfg = {
+            "staged_search": {
+                "filters": {"min_win_rate": 0.40},
+                "strong_filters": {
+                    "min_win_rate": 0.40,
+                    "min_profit_factor": 1.4,
+                    "min_net_profit": 0.0,
+                    "min_trades": 10,
+                    "max_drawdown_pct": 0.10,
+                },
+            },
+        }
+        with mock.patch("optimize_all.get_presets", return_value={"stMultiplier": 2.0}), mock.patch(
+            "optimize_all.optimize_ticker",
+            return_value=mocked_result,
+        ):
+            result = _run_preset_phase(ticker, cfg)
+        self.assertFalse(result["strong_candidate_found"])
+
 
 class DeriveSeedTests(unittest.TestCase):
     def test_distinct_per_ticker(self):

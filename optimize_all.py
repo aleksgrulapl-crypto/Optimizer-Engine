@@ -28,7 +28,7 @@ except Exception:
     yaml = None  # type: ignore
     _HAS_YAML = False
 
-from optimizer_worker import DEFAULT_FILTERS, STRONG_FILTERS, build_neighborhood_grid, is_strong_candidate, optimize_ticker, staged_search
+from optimizer_worker import DEFAULT_FILTERS, STRONG_FILTERS, build_neighborhood_grid, derive_seed, is_strong_candidate, optimize_ticker, staged_search
 from presets import get_presets, normalize_timeframe
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -358,7 +358,11 @@ def _run_expanded_cycle(
         time_budget=int(cfg.get("time_budget_seconds_per_ticker", 3600)),
         search_mode="sample",
         n_samples=expand_samples,
-        seed=int(cfg.get("random_seed", 0)) + (cycle_index * 100003),
+        seed=derive_seed(
+            int(cfg.get("random_seed", 0)) + (cycle_index * 100003),
+            ticker.get("symbol"),
+            ticker.get("timeframe"),
+        ),
         max_exhaustive=int(cfg.get("max_exhaustive", 150000)),
         execution=(cfg.get("execution", {}) or {}),
         robustness=(cfg.get("robustness", {}) or {}),
