@@ -127,7 +127,7 @@ class PresetAndGroupingTests(unittest.TestCase):
             {"symbol": "NVDA", "timeframe": "15m"},
         ])
         self.assertEqual(grouped[0][0], "NVDA")
-        self.assertEqual([item["timeframe"] for item in grouped[0][1]], ["15m", "30m"])
+        self.assertEqual([item["timeframe"] for item in grouped[0][1]], ["30m", "15m"])
         self.assertEqual(grouped[1][0], "MU")
 
     def test_run_preset_phase_marks_unsupported_symbols_as_skipped(self):
@@ -139,6 +139,15 @@ class PresetAndGroupingTests(unittest.TestCase):
 
     def test_run_preset_phase_marks_supported_candidates(self):
         ticker = {"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"}
+        cfg = {
+            "staged_search": {"filters": {"min_win_rate": 0.40}},
+            "execution": {"intrabar_path": "hl"},
+            "robustness": {"enabled": False},
+            "top_k_per_ticker": 7,
+            "time_budget_seconds_per_ticker": 321,
+            "max_exhaustive": 1234,
+            "random_seed": 99,
+        }
         mocked_result = {
             "symbol": "NVDA",
             "timeframe": "15m",
@@ -160,10 +169,21 @@ class PresetAndGroupingTests(unittest.TestCase):
         with mock.patch("optimize_all.get_presets", return_value={"stMultiplier": 2.0}), mock.patch(
             "optimize_all.optimize_ticker",
             return_value=mocked_result,
-        ):
-            result = _run_preset_phase(ticker, {"staged_search": {}})
+        ) as optimize_ticker_mock:
+            result = _run_preset_phase(ticker, cfg)
         self.assertTrue(result["strong_candidate_found"])
         self.assertEqual(result["top"][0]["metrics"]["profit_factor"], 1.5)
+        _, kwargs = optimize_ticker_mock.call_args
+        self.assertEqual(kwargs["top_k"], 7)
+        self.assertEqual(kwargs["time_budget"], 321)
+        self.assertEqual(kwargs["search_mode"], "auto")
+        self.assertEqual(kwargs["n_samples"], 1)
+        self.assertEqual(kwargs["seed"], 99)
+        self.assertEqual(kwargs["max_exhaustive"], 1234)
+        self.assertEqual(kwargs["execution"], {"intrabar_path": "hl"})
+        self.assertEqual(kwargs["robustness"], {"enabled": False})
+        self.assertEqual(kwargs["phase"], "preset")
+        self.assertEqual(kwargs["filters"], {"min_win_rate": 0.40})
 
 
 class DeriveSeedTests(unittest.TestCase):

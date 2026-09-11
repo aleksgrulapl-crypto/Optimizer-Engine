@@ -194,10 +194,7 @@ def _group_tickers_by_symbol(tickers: List[Dict[str, Any]]) -> List[Tuple[str, L
     for ticker in tickers:
         symbol = str(ticker.get("symbol", "")).strip().upper()
         grouped.setdefault(symbol, []).append(ticker)
-    return [
-        (symbol, sorted(entries, key=lambda item: _timeframe_sort_key(item.get("timeframe"))))
-        for symbol, entries in grouped.items()
-    ]
+    return list(grouped.items())
 
 
 def _mark_suitable(result: Dict[str, Any], strong_filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -533,6 +530,7 @@ def main() -> None:
         base_grid = cfg.get("grid_constrained") or cfg.get("grid") or {}
         final_results: List[Dict[str, Any]] = []
         symbol_groups = _group_tickers_by_symbol(gated_tickers)
+        stop_after_current = False
         print(f"Starting staged search for {len(symbol_groups)} ticker(s)")
         for symbol, symbol_tickers in symbol_groups:
             latest_by_timeframe: Dict[str, Dict[str, Any]] = {}
@@ -572,9 +570,14 @@ def main() -> None:
                     if _prompt_yes_no(f"{symbol}: move to the next ticker"):
                         final_results.extend(summarized_results)
                         break
-                    print(f"{symbol}: current candidates kept; widening the expanded search before asking again.")
+                    print(f"{symbol}: current candidates kept; stopping before the next ticker.")
+                    final_results.extend(summarized_results)
+                    stop_after_current = True
+                    break
                 cycle_index += 1
                 print(f"{symbol}: continuing with a wider expanded search.")
+            if stop_after_current:
+                break
     else:
         final_results = _run_legacy_phases(gated_tickers, cfg, progress_rows)
 
