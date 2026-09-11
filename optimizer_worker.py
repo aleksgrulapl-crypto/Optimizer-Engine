@@ -1,6 +1,6 @@
 """
 Worker with candidate tracking, resume, phased runs, robustness filtering, and
-per-ticker staged search (initial random -> expanded -> refined grids).
+per-ticker staged search (initial random -> expanded grids).
 """
 
 import time
@@ -16,21 +16,22 @@ from data_loader import load_candles_from_csv
 from backtest_engine import run_backtest
 
 # Default acceptance filters for a candidate to be considered suitable:
-# win rate >= 50%, profit factor >= 1.2, strictly positive net profit.
+# win rate >= 40%, profit factor >= 1.4, strictly positive net profit, low DD.
 DEFAULT_FILTERS: Dict[str, Any] = {
-    "min_win_rate": 0.50,
-    "min_profit_factor": 1.2,
+    "min_win_rate": 0.40,
+    "min_profit_factor": 1.4,
     "min_net_profit": 0.0,
     "min_trades": 10,
+    "max_drawdown_pct": 0.25,
 }
 
 # Strong-candidate bar: a ticker/timeframe run is only considered complete
 # once at least one candidate clears these thresholds — strictly positive net
-# profit, profit factor >= 1.4, win rate >= 45% and a reasonably low max
-# drawdown. The optimizer does not treat a ticker as finished until a strong
-# candidate has been found (or its time budget is exhausted).
+# profit, profit factor >= 1.4, win rate >= 40% and a reasonably low max
+# drawdown. The orchestrator uses this bar to summarize whether a ticker is
+# ready to move on.
 STRONG_FILTERS: Dict[str, Any] = {
-    "min_win_rate": 0.45,
+    "min_win_rate": 0.40,
     "min_profit_factor": 1.4,
     "min_net_profit": 0.0,
     "min_trades": 10,
@@ -230,7 +231,7 @@ def score_candidate(metrics: Dict[str, Any]) -> float:
 
 
 def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
-    """Suitability check: win rate, profit factor, net profit and trade count floors."""
+    """Suitability check: win rate, profit factor, net profit, trade count, DD."""
     pf = float(metrics.get("profit_factor", 0.0))
     net = float(metrics.get("net_profit", 0.0))
     wr = float(metrics.get("win_rate", 0.0))
@@ -238,9 +239,9 @@ def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
     dd_pct = float(metrics.get("max_drawdown_pct", 0.0))
     if net <= float(filters.get("min_net_profit", 0.0)):
         return False
-    if pf < float(filters.get("min_profit_factor", 1.2)):
+    if pf < float(filters.get("min_profit_factor", 1.4)):
         return False
-    if wr < float(filters.get("min_win_rate", 0.50)):
+    if wr < float(filters.get("min_win_rate", 0.40)):
         return False
     if tc < int(filters.get("min_trades", 10)):
         return False
@@ -252,7 +253,7 @@ def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
 
 def is_strong_candidate(metrics: Dict[str, Any], strong_filters: Dict[str, Any] = None) -> bool:
     """Strong-candidate check: positive net profit, profit factor >= 1.4,
-    win rate >= 45% and a reasonably low max drawdown. A ticker/timeframe run
+    win rate >= 40% and a reasonably low max drawdown. A ticker/timeframe run
     is only treated as complete once a candidate passes this bar."""
     if not passes_filters(metrics, {**STRONG_FILTERS, **(strong_filters or {})}):
         return False
@@ -574,7 +575,8 @@ def optimize_ticker(cfg: Dict[str, Any],
             res = run_backtest(candles, run_params)
             metrics = compute_metrics_from_run(res)
 
-            # Hard filters (defaults: net profit > 0, PF >= 1.2, win rate >= 50%, at least 10 trades)
+            # Hard filters (defaults: net profit > 0, PF >= 1.4, win rate >= 40%,
+            # max drawdown <= 25%, at least 10 trades)
             pf = float(metrics.get("profit_factor", 0.0))
             net = float(metrics.get("net_profit", 0.0))
             wr = float(metrics.get("win_rate", 0.0))
@@ -674,22 +676,18 @@ def staged_search(ticker: Dict[str, Any],
     Stage order:
       1) initial   - random sampling of the base grid (wide, loose ranges)
       2) expanded  - grid expanded around the best suitable initial candidate
-      3) refined   - narrower grid around the best candidate from the expanded stage
 
     Candidates must satisfy the configured filters (win rate, profit factor,
     net profit, trade count); ranking prefers lower drawdown on score ties.
-    Later stages are skipped when no suitable candidate is found, and the
-    refined stage only runs once a strong candidate (positive net profit,
-    PF >= 1.4, WR >= 45%, low drawdown) has been found. Each stage reports
-    ``strong_candidate_found`` so the orchestrator only treats a ticker as
-    finished once the strong bar is cleared (or its budget is exhausted).
+    Later stages are skipped when no suitable candidate is found. Each stage
+    reports ``strong_candidate_found`` so the orchestrator can decide whether
+    to keep expanding or move on.
     """
     staged_cfg = staged_cfg or {}
     filters = staged_cfg.get("filters", None) or None
     strong_filters = {**STRONG_FILTERS, **(staged_cfg.get("strong_filters", {}) or {})}
     expand_radius = float(staged_cfg.get("expand_radius", 2.0))
-    refine_radius = float(staged_cfg.get("refine_radius", 1.0))
-    budget_split = staged_cfg.get("time_budget_split", [0.5, 0.3, 0.2]) or [0.5, 0.3, 0.2]
+    budget_split = staged_cfg.get("time_budget_split", [0.6, 0.4]) or [0.6, 0.4]
     budget_split = [float(x) for x in budget_split]
     total_weight = sum(budget_split) or 1.0
 
@@ -739,11 +737,4 @@ def staged_search(ticker: Dict[str, Any],
     if not top:
         return results
 
-    # Stage 3: refined grid around the top expanded candidate. Only refine
-    # once the strong bar has been cleared — without a strong candidate there
-    # is nothing worth narrowing down further.
-    if not results[-1].get("strong_candidate_found"):
-        return results
-    refined_grid = build_neighborhood_grid(expanded_grid, top[0].get("params", {}), refine_radius)
-    results.append(_run("refined", refined_grid, "auto", n_samples, stage_seed + 2))
     return results
