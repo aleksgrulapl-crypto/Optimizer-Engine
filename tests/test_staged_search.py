@@ -112,8 +112,9 @@ class PresetAndGroupingTests(unittest.TestCase):
             "atrSLmult": 1.7,
             "atrTPmult": 6.3,
             "emaLen": 55,
-        }):
+        }) as get_presets_mock:
             grid = _build_preset_grid("ANY", "15m")
+        get_presets_mock.assert_called_once_with("ANY", "15M")
         self.assertEqual(grid["stMultiplier"], [9.9])
         self.assertEqual(grid["stPeriod"], [21])
         self.assertEqual(grid["atrSLmult"], [1.7])
@@ -126,9 +127,8 @@ class PresetAndGroupingTests(unittest.TestCase):
             {"symbol": "MU", "timeframe": "30m"},
             {"symbol": "NVDA", "timeframe": "15m"},
         ])
-        self.assertEqual(grouped[0][0], "NVDA")
-        self.assertEqual([item["timeframe"] for item in grouped[0][1]], ["15m", "30m"])
-        self.assertEqual(grouped[1][0], "MU")
+        self.assertEqual([symbol for symbol, _ in grouped], ["MU", "NVDA"])
+        self.assertEqual([item["timeframe"] for item in grouped[1][1]], ["15m", "30m"])
 
     def test_run_preset_phase_marks_unsupported_symbols_as_skipped(self):
         result = _run_preset_phase({"symbol": "UNKNOWN", "timeframe": "15m"}, {"staged_search": {}})

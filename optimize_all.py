@@ -197,7 +197,7 @@ def _group_tickers_by_symbol(tickers: List[Dict[str, Any]]) -> List[Tuple[str, L
         grouped.setdefault(symbol, []).append(ticker)
     return [
         (symbol, sorted(entries, key=lambda item: _timeframe_sort_key(item.get("timeframe"))))
-        for symbol, entries in grouped.items()
+        for symbol, entries in sorted(grouped.items())
     ]
 
 
@@ -588,7 +588,11 @@ def main() -> None:
                 _print_symbol_summary(symbol, summarized_results)
                 suitable_found = any(bool(result.get("strong_candidate_found")) for result in summarized_results)
                 print(f"{symbol}: optimizer {'found' if suitable_found else 'did not find'} a candidate that meets the gating thresholds.")
-                if not interactive_prompts and not suitable_found:
+                if not interactive_prompts:
+                    if suitable_found:
+                        print(f"{symbol}: no interactive input available; accepting the gated candidates and moving on.")
+                        final_results.extend(summarized_results)
+                        break
                     print(f"{symbol}: no interactive input available and no gated candidate found; stopping after the current ticker.")
                     final_results.extend(summarized_results)
                     stop_after_current = True
