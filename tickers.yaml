@@ -7,7 +7,7 @@
 #   3) gate     - review the current candidates, then either move on or keep
 #                 widening the expanded search on the current ticker
 # A ticker is only treated as ready to move on once it has a suitable candidate
-# (positive net profit, PF >= 1.4, WR >= 40%, low drawdown) and you approve the
+# (positive net profit, PF >= 1.5, WR >= 50%, low drawdown) and you approve the
 # prompt to continue to the next ticker below.
 
 tickers:
@@ -477,15 +477,15 @@ time_budget_seconds_per_ticker: 3600
 staged_search:
   enabled: true
   filters:
-    min_win_rate: 0.40        # at least 40% win rate
-    min_profit_factor: 1.4    # profit factor of at least 1.4
+    min_win_rate: 0.50        # at least 50% win rate
+    min_profit_factor: 1.5    # profit factor of at least 1.5
     min_net_profit: 0.0       # strictly positive net profit
     min_trades: 10
     max_drawdown_pct: 0.25    # low max drawdown (<= 25%)
   # strong-candidate bar used by the interactive gating summary
   strong_filters:
-    min_win_rate: 0.40            # at least 40% win rate
-    min_profit_factor: 1.4        # profit factor of at least 1.4
+    min_win_rate: 0.50            # at least 50% win rate
+    min_profit_factor: 1.5        # profit factor of at least 1.5
     min_net_profit: 0.0           # strictly positive net profit
     min_trades: 10
     max_drawdown_pct: 0.25        # low max drawdown (<= 25%)
