@@ -252,6 +252,16 @@ def _prompt_yes_no(message: str, default: Any = None) -> bool:
         print("Please answer y or n.")
 
 
+def _read_positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return int(default)
+    if parsed <= 0:
+        return int(default)
+    return parsed
+
+
 def _print_symbol_summary(symbol: str, results: List[Dict[str, Any]]) -> None:
     print(f"\n{symbol} summary:")
     for result in results:
@@ -549,7 +559,7 @@ def main() -> None:
     start = time()
     staged_cfg = cfg.get("staged_search", {}) or {}
     if bool(staged_cfg.get("enabled", True)):
-        confirm_continue_every_cycles = max(1, int(staged_cfg.get("confirm_continue_every_cycles", 6)))
+        confirm_continue_every_cycles = _read_positive_int(staged_cfg.get("confirm_continue_every_cycles", 6), 6)
         base_grid = cfg.get("grid_constrained") or cfg.get("grid") or {}
         final_results: List[Dict[str, Any]] = []
         symbol_groups = _group_tickers_by_symbol(gated_tickers)

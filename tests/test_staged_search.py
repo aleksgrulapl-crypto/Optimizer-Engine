@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import optimize_all as oa
 import optimizer_worker as ow
 from optimize_all import _build_preset_grid, _group_tickers_by_symbol, _run_preset_phase, merge_with_defaults
 from optimizer_worker import (
@@ -438,6 +439,12 @@ class StagedConfigTests(unittest.TestCase):
         self.assertFalse(cfg["staged_search"]["enabled"])
         self.assertEqual(cfg["staged_search"]["expand_radius"], 3.0)
         self.assertEqual(cfg["staged_search"]["filters"], DEFAULT_FILTERS)
+ 
+    def test_confirm_continue_every_cycles_falls_back_when_invalid(self):
+        self.assertEqual(oa._read_positive_int("bad", 6), 6)
+        self.assertEqual(oa._read_positive_int(None, 6), 6)
+        self.assertEqual(oa._read_positive_int(0, 6), 6)
+        self.assertEqual(oa._read_positive_int(-2, 6), 6)
 
     def test_repo_yaml_wide_initial_grid(self):
         from optimize_all import load_config
@@ -458,6 +465,64 @@ class StagedConfigTests(unittest.TestCase):
         self.assertEqual(grid["atrTPmult"]["stop"], 10.0)
         self.assertEqual(grid["emaLen"]["min"], 20)
         self.assertEqual(grid["emaLen"]["max"], 300)
+
+
+class StagedLoopPromptCadenceTests(unittest.TestCase):
+    def test_declining_periodic_prompt_stops_current_symbol(self):
+        cfg = merge_with_defaults({
+            "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"}],
+            "staged_search": {"enabled": True, "confirm_continue_every_cycles": 2},
+        })
+        ticker = cfg["tickers"][0]
+        preset_result = {
+            "symbol": "NVDA",
+            "timeframe": "15m",
+            "phase": "preset",
+            "top": [],
+            "evaluated": 1,
+            "elapsed_seconds": 0.0,
+            "note": "",
+            "strong_candidate_found": False,
+        }
+        staged_result = {
+            "symbol": "NVDA",
+            "timeframe": "15m",
+            "phase": "initial",
+            "top": [],
+            "evaluated": 1,
+            "elapsed_seconds": 0.0,
+            "note": "",
+            "strong_candidate_found": False,
+        }
+        expanded_result = {
+            "symbol": "NVDA",
+            "timeframe": "15m",
+            "phase": "expanded",
+            "top": [],
+            "evaluated": 1,
+            "elapsed_seconds": 0.0,
+            "note": "",
+            "strong_candidate_found": False,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            old_cwd = os.getcwd()
+            os.chdir(td)
+            try:
+                with mock.patch("optimize_all.load_config", return_value=cfg), \
+                     mock.patch("optimize_all.discover_tsvs_auto", return_value=[]), \
+                     mock.patch("optimize_all._sanity_check_ticker", return_value=(True, "ok")), \
+                     mock.patch("optimize_all._parity_gate_pass", return_value=(True, "ok")), \
+                     mock.patch("optimize_all._run_preset_phase", return_value=preset_result), \
+                     mock.patch("optimize_all._run_staged_cycle", return_value=[staged_result]), \
+                     mock.patch("optimize_all._run_expanded_cycle", return_value=expanded_result) as expanded_mock, \
+                     mock.patch("optimize_all._prompt_yes_no", return_value=False) as prompt_mock, \
+                     mock.patch("optimize_all._write_progress_rows"), \
+                     mock.patch("sys.stdin.isatty", return_value=True):
+                    oa.main()
+            finally:
+                os.chdir(old_cwd)
+        self.assertEqual(expanded_mock.call_count, 1)
+        prompt_mock.assert_called_once()
 
 
 if __name__ == "__main__":
