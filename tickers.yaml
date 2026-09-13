@@ -473,6 +473,8 @@ time_budget_seconds_per_ticker: 3600
 # at a time, evaluates the available timeframe presets first, and prompts
 # before moving to the next ticker. If you answer "no" to the suitability
 # prompt, it keeps widening the expanded search on the current ticker.
+# When no suitable candidate is found, expanded-only search auto-continues and
+# asks for confirmation every N staged cycles (default 6).
 # Set enabled: false to fall back to the legacy constrained/fallback/expanded phases.
 staged_search:
   enabled: true
@@ -491,6 +493,7 @@ staged_search:
     max_drawdown_pct: 0.25        # low max drawdown (<= 25%)
   expand_radius: 2.0          # expanded stage spans +/- radius grid steps per parameter
   time_budget_split: [0.6, 0.4]  # share of the per-ticker budget per stage
+  confirm_continue_every_cycles: 6  # prompt every N no-suitable cycles before continuing
 
 # optional post-optimization stability check on top candidates
 robustness:
