@@ -576,7 +576,8 @@ def main() -> None:
 
             cycle_index = 0
             while True:
-                print(f"{symbol}: staged cycle {cycle_index + 1}")
+                current_stage_cycle = cycle_index + 1
+                print(f"{symbol}: staged cycle {current_stage_cycle}")
                 for ticker in symbol_tickers:
                     timeframe_key = str(ticker.get("timeframe", "")).strip().lower()
                     if cycle_index == 0:
@@ -614,8 +615,14 @@ def main() -> None:
                     cycle_index += 1
                     print(f"{symbol}: no interactive input available and no gated candidate found; automatically continuing with a wider expanded search.")
                     continue
-                if suitable_found and _prompt_yes_no(f"{symbol}: are the current candidates suitable", default=True):
-                    if _prompt_yes_no(f"{symbol}: move to the next ticker", default=True):
+                if suitable_found and _prompt_yes_no(
+                    f"{symbol}: Current Stage Cycle {current_stage_cycle} — are the current candidates suitable",
+                    default=True,
+                ):
+                    if _prompt_yes_no(
+                        f"{symbol}: Current Stage Cycle {current_stage_cycle} — move to the next ticker",
+                        default=True,
+                    ):
                         final_results.extend(summarized_results)
                         break
                     print(f"{symbol}: current candidates kept; stopping before the next ticker.")
@@ -625,7 +632,7 @@ def main() -> None:
                 no_suitable_cycles = cycle_index + 1
                 should_prompt_continue = (no_suitable_cycles % confirm_continue_every_cycles) == 0
                 if should_prompt_continue and not _prompt_yes_no(
-                    f"{symbol}: no suitable candidate after {no_suitable_cycles} staged cycle(s). Continue expanded-only search",
+                    f"{symbol}: Current Stage Cycle {current_stage_cycle} — no suitable candidate after {no_suitable_cycles} staged cycle(s). Continue expanded-only search",
                     default=True,
                 ):
                     print(f"{symbol}: no suitable candidate accepted; moving to the next ticker.")
