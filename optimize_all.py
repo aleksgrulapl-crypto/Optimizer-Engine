@@ -593,6 +593,12 @@ def main() -> None:
                         print(f"{symbol}: no interactive input available; accepting the gated candidates and moving on.")
                         final_results.extend(summarized_results)
                         break
+                    evaluated_this_cycle = sum(int(result.get("evaluated", 0) or 0) for result in summarized_results)
+                    if evaluated_this_cycle <= 0:
+                        print(f"{symbol}: no interactive input available, no gated candidate found, and no new candidates evaluated; stopping after the current ticker.")
+                        final_results.extend(summarized_results)
+                        stop_after_current = True
+                        break
                     cycle_index += 1
                     print(f"{symbol}: no interactive input available and no gated candidate found; automatically continuing with a wider expanded search.")
                     continue
