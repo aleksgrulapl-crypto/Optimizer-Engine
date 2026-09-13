@@ -523,6 +523,8 @@ class StagedLoopPromptCadenceTests(unittest.TestCase):
                 os.chdir(old_cwd)
         self.assertEqual(expanded_mock.call_count, 1)
         prompt_mock.assert_called_once()
+        prompt_message = prompt_mock.call_args.args[0]
+        self.assertIn("Current Stage Cycle 2", prompt_message)
 
 
 if __name__ == "__main__":
