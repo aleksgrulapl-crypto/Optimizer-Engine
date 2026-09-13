@@ -16,10 +16,10 @@ from data_loader import load_candles_from_csv
 from backtest_engine import run_backtest
 
 # Default acceptance filters for a candidate to be considered suitable:
-# win rate >= 40%, profit factor >= 1.4, strictly positive net profit, low DD.
+# win rate >= 50%, profit factor >= 1.5, strictly positive net profit, low DD.
 DEFAULT_FILTERS: Dict[str, Any] = {
-    "min_win_rate": 0.40,
-    "min_profit_factor": 1.4,
+    "min_win_rate": 0.50,
+    "min_profit_factor": 1.5,
     "min_net_profit": 0.0,
     "min_trades": 10,
     "max_drawdown_pct": 0.25,
@@ -27,12 +27,12 @@ DEFAULT_FILTERS: Dict[str, Any] = {
 
 # Strong-candidate bar: a ticker/timeframe run is only considered complete
 # once at least one candidate clears these thresholds — strictly positive net
-# profit, profit factor >= 1.4, win rate >= 40% and a reasonably low max
+# profit, profit factor >= 1.5, win rate >= 50% and a reasonably low max
 # drawdown. The orchestrator uses this bar to summarize whether a ticker is
 # ready to move on.
 STRONG_FILTERS: Dict[str, Any] = {
-    "min_win_rate": 0.40,
-    "min_profit_factor": 1.4,
+    "min_win_rate": 0.50,
+    "min_profit_factor": 1.5,
     "min_net_profit": 0.0,
     "min_trades": 10,
     "max_drawdown_pct": 0.25,
@@ -252,8 +252,8 @@ def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
 
 
 def is_strong_candidate(metrics: Dict[str, Any], strong_filters: Dict[str, Any] = None) -> bool:
-    """Strong-candidate check: positive net profit, profit factor >= 1.4,
-    win rate >= 40% and a reasonably low max drawdown. A ticker/timeframe run
+    """Strong-candidate check: positive net profit, profit factor >= 1.5,
+    win rate >= 50% and a reasonably low max drawdown. A ticker/timeframe run
     is only treated as complete once a candidate passes this bar."""
     if not passes_filters(metrics, {**STRONG_FILTERS, **(strong_filters or {})}):
         return False
@@ -575,7 +575,7 @@ def optimize_ticker(cfg: Dict[str, Any],
             res = run_backtest(candles, run_params)
             metrics = compute_metrics_from_run(res)
 
-            # Hard filters (defaults: net profit > 0, PF >= 1.4, win rate >= 40%,
+            # Hard filters (defaults: net profit > 0, PF >= 1.5, win rate >= 50%,
             # max drawdown <= 25%, at least 10 trades)
             pf = float(metrics.get("profit_factor", 0.0))
             net = float(metrics.get("net_profit", 0.0))
