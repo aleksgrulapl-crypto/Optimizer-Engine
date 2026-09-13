@@ -78,6 +78,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "strong_filters": dict(STRONG_FILTERS),
         "expand_radius": 2.0,
         "time_budget_split": [0.6, 0.4],
+        "confirm_continue_every_cycles": 6,
     },
 }
 
@@ -548,6 +549,7 @@ def main() -> None:
     start = time()
     staged_cfg = cfg.get("staged_search", {}) or {}
     if bool(staged_cfg.get("enabled", True)):
+        confirm_continue_every_cycles = max(1, int(staged_cfg.get("confirm_continue_every_cycles", 6)))
         base_grid = cfg.get("grid_constrained") or cfg.get("grid") or {}
         final_results: List[Dict[str, Any]] = []
         symbol_groups = _group_tickers_by_symbol(gated_tickers)
@@ -602,16 +604,25 @@ def main() -> None:
                     cycle_index += 1
                     print(f"{symbol}: no interactive input available and no gated candidate found; automatically continuing with a wider expanded search.")
                     continue
-                if _prompt_yes_no(f"{symbol}: are the current candidates suitable", default=suitable_found):
-                    if _prompt_yes_no(f"{symbol}: move to the next ticker", default=suitable_found):
+                if suitable_found and _prompt_yes_no(f"{symbol}: are the current candidates suitable", default=True):
+                    if _prompt_yes_no(f"{symbol}: move to the next ticker", default=True):
                         final_results.extend(summarized_results)
                         break
                     print(f"{symbol}: current candidates kept; stopping before the next ticker.")
                     final_results.extend(summarized_results)
                     stop_after_current = True
                     break
+                no_suitable_cycles = cycle_index + 1
+                should_prompt_continue = (no_suitable_cycles % confirm_continue_every_cycles) == 0
+                if should_prompt_continue and not _prompt_yes_no(
+                    f"{symbol}: no suitable candidate after {no_suitable_cycles} staged cycle(s). Continue expanded-only search",
+                    default=True,
+                ):
+                    print(f"{symbol}: no suitable candidate accepted; moving to the next ticker.")
+                    final_results.extend(summarized_results)
+                    break
                 cycle_index += 1
-                print(f"{symbol}: continuing with a wider expanded search.")
+                print(f"{symbol}: no suitable candidate found; automatically continuing with expanded-only search.")
             if stop_after_current:
                 break
     else:

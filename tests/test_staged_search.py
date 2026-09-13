@@ -409,6 +409,7 @@ class StagedConfigTests(unittest.TestCase):
         self.assertEqual(staged["strong_filters"], STRONG_FILTERS)
         self.assertIn("expand_radius", staged)
         self.assertIn("time_budget_split", staged)
+        self.assertEqual(staged["confirm_continue_every_cycles"], 6)
         self.assertEqual(cfg["time_budget_seconds_per_ticker"], 3600)
 
     def test_repo_yaml_loads_staged_defaults(self):
@@ -421,6 +422,7 @@ class StagedConfigTests(unittest.TestCase):
             os.chdir(old_cwd)
         staged = cfg["staged_search"]
         self.assertTrue(staged["enabled"])
+        self.assertEqual(staged["confirm_continue_every_cycles"], 6)
         self.assertEqual(staged["filters"]["min_win_rate"], 0.40)
         self.assertEqual(staged["filters"]["min_profit_factor"], 1.4)
         self.assertEqual(staged["filters"]["min_net_profit"], 0.0)
