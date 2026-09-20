@@ -140,7 +140,7 @@ def discover_tsvs_auto() -> List[Dict[str, Any]]:
         symbol = p.stem.split("_")[0]
         m = tf_suffix.search(p.stem)
         timeframe = m.group(1).lower() if m else "15m"
-        tickers.append({"symbol": symbol, "timeframe": timeframe, "tsv": str(p), "tv_export": None, "parity_ok": False})
+        tickers.append({"symbol": symbol, "timeframe": timeframe, "tsv": str(p), "tv_export": None, "parity_ok": False, "Status": "Incomplete"})
     return tickers
 
 
@@ -200,6 +200,12 @@ def _group_tickers_by_symbol(tickers: List[Dict[str, Any]]) -> List[Tuple[str, L
         (symbol, sorted(entries, key=lambda item: _timeframe_sort_key(item.get("timeframe"))))
         for symbol, entries in sorted(grouped.items())
     ]
+
+
+def _ticker_status(ticker: Dict[str, Any]) -> str:
+    raw = ticker.get("Status", ticker.get("status", "Incomplete"))
+    status = str(raw or "Incomplete").strip().lower()
+    return status if status else "incomplete"
 
 
 def _mark_suitable(result: Dict[str, Any], strong_filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -538,6 +544,10 @@ def main() -> None:
     gated_tickers: List[Dict[str, Any]] = []
     for t in tickers:
         symbol = t.get("symbol", "")
+        status = _ticker_status(t)
+        if status == "completed":
+            progress_rows.append([symbol, "status", "skipped", 0, 0, "", f"{symbol}: skipped because Status is Completed"])
+            continue
         ok, note = _sanity_check_ticker(t)
         if not ok:
             progress_rows.append([symbol, "sanity", "skipped", 0, 0, "", note])
@@ -553,7 +563,7 @@ def main() -> None:
     _write_progress_rows(progress_path, progress_rows)
 
     if not gated_tickers:
-        print("No tickers passed sanity + parity gates. Exiting.")
+        print("No tickers passed the status, sanity, and parity gates. Exiting.")
         return
 
     start = time()
