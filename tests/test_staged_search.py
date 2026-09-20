@@ -607,6 +607,22 @@ class StagedLoopPromptCadenceTests(unittest.TestCase):
         sanity_mock.assert_called_once()
         parity_mock.assert_called_once()
 
+    def test_invalid_status_fails_fast(self):
+        cfg = merge_with_defaults({
+            "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv", "Status": "Done"}],
+            "staged_search": {"enabled": False},
+        })
+        with tempfile.TemporaryDirectory() as td:
+            old_cwd = os.getcwd()
+            os.chdir(td)
+            try:
+                with mock.patch("optimize_all.load_config", return_value=cfg), \
+                     mock.patch("optimize_all.discover_tsvs_auto", return_value=[]), \
+                     self.assertRaisesRegex(ValueError, "invalid Status 'Done'"):
+                    oa.main()
+            finally:
+                os.chdir(old_cwd)
+
     def test_declining_periodic_prompt_stops_current_symbol(self):
         cfg = merge_with_defaults({
             "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"}],

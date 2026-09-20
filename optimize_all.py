@@ -205,7 +205,15 @@ def _group_tickers_by_symbol(tickers: List[Dict[str, Any]]) -> List[Tuple[str, L
 def _ticker_status(ticker: Dict[str, Any]) -> str:
     raw = ticker.get("Status", ticker.get("status", "Incomplete"))
     status = str(raw or "Incomplete").strip().lower()
-    return status if status else "incomplete"
+    if not status:
+        status = "incomplete"
+    if status not in {"completed", "incomplete"}:
+        symbol = str(ticker.get("symbol", "")).strip().upper() or "UNKNOWN"
+        timeframe = str(ticker.get("timeframe", "")).strip().lower() or "n/a"
+        raise ValueError(
+            f"{symbol} {timeframe}: invalid Status '{raw}' (expected Completed or Incomplete)"
+        )
+    return status
 
 
 def _mark_suitable(result: Dict[str, Any], strong_filters: Dict[str, Any]) -> Dict[str, Any]:
