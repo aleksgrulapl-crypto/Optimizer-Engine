@@ -1,6 +1,7 @@
 """Tests for the staged search strategy (initial random -> expanded)."""
 
 import csv
+import json
 import math
 import os
 import shutil
@@ -252,6 +253,102 @@ class CandidateRankingTests(unittest.TestCase):
         self.assertIs(ordered[0], better)
 
 
+class CompletedRunResumeTests(unittest.TestCase):
+    def _write_completed_run(self, root: Path, phase: str, record: dict) -> None:
+        out_dir = root / "completed_runs"
+        out_dir.mkdir(exist_ok=True)
+        with (out_dir / f"NVDA_15m_{phase}.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    def _run_params(self, st_multiplier: float) -> dict:
+        return {
+            "stMultiplier": st_multiplier,
+            "ticker": "NVDA",
+            "timeframe": "15m",
+            "intrabar_path": "ohlc",
+            "position_size": 1.0,
+            "slippage": 0.0,
+            "commission_pct": 0.0,
+            "pyramiding": 1,
+        }
+
+    def _metrics(self, net_profit: float, profit_factor: float = 2.0) -> dict:
+        return {
+            "net_profit": net_profit,
+            "trade_count": 40,
+            "win_rate": 0.6,
+            "profit_factor": profit_factor,
+            "max_drawdown": 10.0,
+            "max_drawdown_pct": 0.1,
+        }
+
+    def test_optimize_ticker_reuses_saved_candidates_without_rerunning(self):
+        saved_params = self._run_params(1.0)
+        saved_metrics = self._metrics(150.0)
+        saved_score = ow.score_candidate(saved_metrics)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_completed_run(root, "expanded", {
+                "_param_key": ow._param_key(saved_params),
+                "params": saved_params,
+                "metrics": saved_metrics,
+                "score": saved_score,
+                "status": "accepted",
+            })
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with mock.patch("optimizer_worker.load_candles_from_csv", return_value=[]), \
+                     mock.patch("optimizer_worker.run_backtest") as run_backtest_mock:
+                    result = ow.optimize_ticker(
+                        {"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"},
+                        {"stMultiplier": [1.0]},
+                        ["ohlc"],
+                        phase="expanded",
+                        robustness={"enabled": False},
+                    )
+            finally:
+                os.chdir(old_cwd)
+        run_backtest_mock.assert_not_called()
+        self.assertEqual(result["evaluated"], 0)
+        self.assertEqual(result["top"][0]["params"]["stMultiplier"], 1.0)
+        self.assertEqual(result["top"][0]["score"], saved_score)
+
+    def test_optimize_ticker_only_announces_improved_saved_best_score(self):
+        saved_params = self._run_params(1.0)
+        saved_metrics = self._metrics(400.0, profit_factor=2.5)
+        saved_score = 999.0
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_completed_run(root, "expanded", {
+                "_param_key": ow._param_key(saved_params),
+                "params": saved_params,
+                "metrics": saved_metrics,
+                "score": saved_score,
+                "status": "accepted",
+            })
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with mock.patch("optimizer_worker.load_candles_from_csv", return_value=[]), \
+                     mock.patch("optimizer_worker.run_backtest", return_value={"trade_dicts": []}), \
+                     mock.patch("optimizer_worker.compute_metrics_from_run", return_value=self._metrics(120.0)), \
+                     mock.patch("builtins.print") as print_mock:
+                    result = ow.optimize_ticker(
+                        {"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"},
+                        {"stMultiplier": [1.0, 2.0]},
+                        ["ohlc"],
+                        phase="expanded",
+                        robustness={"enabled": False},
+                    )
+            finally:
+                os.chdir(old_cwd)
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertNotIn("NEW BEST FOUND", printed)
+        self.assertEqual(result["top"][0]["score"], saved_score)
+        self.assertEqual(result["top"][0]["params"]["stMultiplier"], 1.0)
+
+
 class NeighborhoodGridTests(unittest.TestCase):
     GRID = {
         "stMultiplier": {"start": 1.0, "stop": 3.0, "step": 0.2},
@@ -468,6 +565,64 @@ class StagedConfigTests(unittest.TestCase):
 
 
 class StagedLoopPromptCadenceTests(unittest.TestCase):
+    def test_completed_status_skips_ticker_before_any_optimization(self):
+        cfg = merge_with_defaults({
+            "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv", "Status": "Completed"}],
+            "staged_search": {"enabled": True},
+        })
+        with tempfile.TemporaryDirectory() as td:
+            old_cwd = os.getcwd()
+            os.chdir(td)
+            try:
+                with mock.patch("optimize_all.load_config", return_value=cfg), \
+                     mock.patch("optimize_all.discover_tsvs_auto", return_value=[]), \
+                     mock.patch("optimize_all._sanity_check_ticker") as sanity_mock, \
+                     mock.patch("optimize_all._write_progress_rows"), \
+                     mock.patch("builtins.print") as print_mock:
+                    oa.main()
+            finally:
+                os.chdir(old_cwd)
+        sanity_mock.assert_not_called()
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("No tickers passed the status, sanity, and parity gates. Exiting.", printed)
+
+    def test_incomplete_status_continues_through_gates(self):
+        cfg = merge_with_defaults({
+            "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv", "Status": "Incomplete"}],
+            "staged_search": {"enabled": False},
+        })
+        with tempfile.TemporaryDirectory() as td:
+            old_cwd = os.getcwd()
+            os.chdir(td)
+            try:
+                with mock.patch("optimize_all.load_config", return_value=cfg), \
+                     mock.patch("optimize_all.discover_tsvs_auto", return_value=[]), \
+                     mock.patch("optimize_all._sanity_check_ticker", return_value=(True, "ok")) as sanity_mock, \
+                     mock.patch("optimize_all._parity_gate_pass", return_value=(True, "ok")) as parity_mock, \
+                     mock.patch("optimize_all._run_legacy_phases", return_value=[]), \
+                     mock.patch("optimize_all._write_progress_rows"):
+                    oa.main()
+            finally:
+                os.chdir(old_cwd)
+        sanity_mock.assert_called_once()
+        parity_mock.assert_called_once()
+
+    def test_invalid_status_fails_fast(self):
+        cfg = merge_with_defaults({
+            "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv", "Status": "Done"}],
+            "staged_search": {"enabled": False},
+        })
+        with tempfile.TemporaryDirectory() as td:
+            old_cwd = os.getcwd()
+            os.chdir(td)
+            try:
+                with mock.patch("optimize_all.load_config", return_value=cfg), \
+                     mock.patch("optimize_all.discover_tsvs_auto", return_value=[]), \
+                     self.assertRaisesRegex(ValueError, "invalid Status 'Done'"):
+                    oa.main()
+            finally:
+                os.chdir(old_cwd)
+
     def test_declining_periodic_prompt_stops_current_symbol(self):
         cfg = merge_with_defaults({
             "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"}],

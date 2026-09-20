@@ -378,20 +378,44 @@ def _append_completed_run(label: str, phase: str, record: Dict[str, Any]) -> Non
         f.write(json.dumps(record) + "\n")
 
 
-def _load_completed_keys(label: str, phase: str) -> set:
+def _load_completed_state(label: str, phase: str) -> Tuple[set, List[Dict[str, Any]], float]:
     path = Path("completed_runs") / f"{label}_{phase}.jsonl"
     if not path.exists():
-        return set()
+        return set(), [], float("-inf")
     keys = set()
+    accepted: Dict[str, Dict[str, Any]] = {}
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             try:
                 rec = json.loads(line)
-                k = rec.get("_param_key")
+                params = rec.get("params", {}) or {}
+                k = rec.get("_param_key") or (_param_key(params) if params else None)
                 if k:
                     keys.add(k)
+                if rec.get("status") != "accepted":
+                    continue
+                metrics = rec.get("metrics", {}) or {}
+                score = rec.get("score")
+                if not k or not params or not metrics or score is None:
+                    continue
+                candidate = {
+                    "params": params,
+                    "metrics": metrics,
+                    "score": float(score),
+                }
+                existing = accepted.get(k)
+                if existing is None or _candidate_rank_key(candidate) > _candidate_rank_key(existing):
+                    accepted[k] = candidate
             except Exception:
                 continue
+    candidates = list(accepted.values())
+    _sort_candidates(candidates, len(candidates) or 1)
+    best_score = candidates[0]["score"] if candidates else float("-inf")
+    return keys, candidates, best_score
+
+
+def _load_completed_keys(label: str, phase: str) -> set:
+    keys, _, _ = _load_completed_state(label, phase)
     return keys
 
 
@@ -531,11 +555,9 @@ def optimize_ticker(cfg: Dict[str, Any],
     filters = {**DEFAULT_FILTERS, **(filters or {})}
 
     candles = load_candles_from_csv(tsv)
-    completed_keys = _load_completed_keys(label, phase)
+    completed_keys, best_candidates, best_score_so_far = _load_completed_state(label, phase)
 
-    best_candidates: List[Dict[str, Any]] = []
     evaluated = 0
-    best_score_so_far: float = float("-inf")
 
     slippage = float(execution.get("slippage", 0.0))
     commission_pct = float(execution.get("commission_pct", 0.0))
