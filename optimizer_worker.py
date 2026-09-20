@@ -396,7 +396,7 @@ def _load_completed_state(label: str, phase: str) -> Tuple[set, List[Dict[str, A
                     continue
                 metrics = rec.get("metrics", {}) or {}
                 score = rec.get("score")
-                if not params or not metrics or score is None:
+                if not k or not params or not metrics or score is None:
                     continue
                 candidate = {
                     "params": params,
