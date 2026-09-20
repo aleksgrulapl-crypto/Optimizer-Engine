@@ -1,6 +1,7 @@
 """Tests for the staged search strategy (initial random -> expanded)."""
 
 import csv
+import json
 import math
 import os
 import shutil
@@ -250,6 +251,102 @@ class CandidateRankingTests(unittest.TestCase):
         worse = {"score": 100.0, "metrics": {"max_drawdown": 1.0}}
         ordered = sorted([worse, better], key=ow._candidate_rank_key, reverse=True)
         self.assertIs(ordered[0], better)
+
+
+class CompletedRunResumeTests(unittest.TestCase):
+    def _write_completed_run(self, root: Path, phase: str, record: dict) -> None:
+        out_dir = root / "completed_runs"
+        out_dir.mkdir(exist_ok=True)
+        with (out_dir / f"NVDA_15m_{phase}.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    def _run_params(self, st_multiplier: float) -> dict:
+        return {
+            "stMultiplier": st_multiplier,
+            "ticker": "NVDA",
+            "timeframe": "15m",
+            "intrabar_path": "ohlc",
+            "position_size": 1.0,
+            "slippage": 0.0,
+            "commission_pct": 0.0,
+            "pyramiding": 1,
+        }
+
+    def _metrics(self, net_profit: float, profit_factor: float = 2.0) -> dict:
+        return {
+            "net_profit": net_profit,
+            "trade_count": 40,
+            "win_rate": 0.6,
+            "profit_factor": profit_factor,
+            "max_drawdown": 10.0,
+            "max_drawdown_pct": 0.1,
+        }
+
+    def test_optimize_ticker_reuses_saved_candidates_without_rerunning(self):
+        saved_params = self._run_params(1.0)
+        saved_metrics = self._metrics(150.0)
+        saved_score = ow.score_candidate(saved_metrics)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_completed_run(root, "expanded", {
+                "_param_key": ow._param_key(saved_params),
+                "params": saved_params,
+                "metrics": saved_metrics,
+                "score": saved_score,
+                "status": "accepted",
+            })
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with mock.patch("optimizer_worker.load_candles_from_csv", return_value=[]), \
+                     mock.patch("optimizer_worker.run_backtest") as run_backtest_mock:
+                    result = ow.optimize_ticker(
+                        {"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"},
+                        {"stMultiplier": [1.0]},
+                        ["ohlc"],
+                        phase="expanded",
+                        robustness={"enabled": False},
+                    )
+            finally:
+                os.chdir(old_cwd)
+        run_backtest_mock.assert_not_called()
+        self.assertEqual(result["evaluated"], 0)
+        self.assertEqual(result["top"][0]["params"]["stMultiplier"], 1.0)
+        self.assertEqual(result["top"][0]["score"], saved_score)
+
+    def test_optimize_ticker_only_announces_improved_saved_best_score(self):
+        saved_params = self._run_params(1.0)
+        saved_metrics = self._metrics(400.0, profit_factor=2.5)
+        saved_score = 999.0
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_completed_run(root, "expanded", {
+                "_param_key": ow._param_key(saved_params),
+                "params": saved_params,
+                "metrics": saved_metrics,
+                "score": saved_score,
+                "status": "accepted",
+            })
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with mock.patch("optimizer_worker.load_candles_from_csv", return_value=[]), \
+                     mock.patch("optimizer_worker.run_backtest", return_value={"trade_dicts": []}), \
+                     mock.patch("optimizer_worker.compute_metrics_from_run", return_value=self._metrics(120.0)), \
+                     mock.patch("builtins.print") as print_mock:
+                    result = ow.optimize_ticker(
+                        {"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"},
+                        {"stMultiplier": [1.0, 2.0]},
+                        ["ohlc"],
+                        phase="expanded",
+                        robustness={"enabled": False},
+                    )
+            finally:
+                os.chdir(old_cwd)
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertNotIn("NEW BEST FOUND", printed)
+        self.assertEqual(result["top"][0]["score"], saved_score)
+        self.assertEqual(result["top"][0]["params"]["stMultiplier"], 1.0)
 
 
 class NeighborhoodGridTests(unittest.TestCase):
