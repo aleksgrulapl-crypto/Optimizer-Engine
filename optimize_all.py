@@ -78,7 +78,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "strong_filters": dict(STRONG_FILTERS),
         "expand_radius": 2.0,
         "time_budget_split": [0.6, 0.4],
-        "confirm_continue_every_cycles": 6,
+        "confirm_continue_every_cycles": 12,
     },
 }
 
@@ -240,6 +240,28 @@ def _append_progress_row(progress_rows: List[List[Any]], result: Dict[str, Any])
         top_score,
         note,
     ])
+
+
+def _best_scores_by_timeframe(results: List[Dict[str, Any]]) -> Dict[str, float]:
+    scores: Dict[str, float] = {}
+    for result in results:
+        top = result.get("top", []) or []
+        if not top:
+            continue
+        try:
+            score = float(top[0].get("score"))
+        except (TypeError, ValueError):
+            continue
+        timeframe_key = str(result.get("timeframe", "")).strip().lower()
+        scores[timeframe_key] = score
+    return scores
+
+
+def _has_new_best_score(current_scores: Dict[str, float], previous_scores: Dict[str, float]) -> bool:
+    for timeframe_key, score in current_scores.items():
+        if score > previous_scores.get(timeframe_key, float("-inf")):
+            return True
+    return False
 
 
 def _build_preset_grid(symbol: str, timeframe: Any) -> Dict[str, List[Any]]:
@@ -577,7 +599,7 @@ def main() -> None:
     start = time()
     staged_cfg = cfg.get("staged_search", {}) or {}
     if bool(staged_cfg.get("enabled", True)):
-        confirm_continue_every_cycles = _read_positive_int(staged_cfg.get("confirm_continue_every_cycles", 6), 6)
+        confirm_continue_every_cycles = _read_positive_int(staged_cfg.get("confirm_continue_every_cycles", 12), 12)
         base_grid = cfg.get("grid_constrained") or cfg.get("grid") or {}
         final_results: List[Dict[str, Any]] = []
         symbol_groups = _group_tickers_by_symbol(gated_tickers)
@@ -586,6 +608,7 @@ def main() -> None:
         print(f"Starting staged search for {len(symbol_groups)} ticker(s)")
         for symbol, symbol_tickers in symbol_groups:
             latest_by_timeframe: Dict[str, Dict[str, Any]] = {}
+            last_declined_suitable_scores: Dict[str, float] = {}
             print(f"\nStarting {symbol} with {len(symbol_tickers)} timeframe preset(s)")
             for ticker in symbol_tickers:
                 preset_result = _run_preset_phase(ticker, cfg)
@@ -633,20 +656,30 @@ def main() -> None:
                     cycle_index += 1
                     print(f"{symbol}: no interactive input available and no gated candidate found; automatically continuing with a wider expanded search.")
                     continue
-                if suitable_found and _prompt_yes_no(
-                    f"{symbol}: Current Stage Cycle {current_stage_cycle} — are the current candidates suitable",
-                    default=True,
-                ):
+                if suitable_found:
+                    current_best_scores = _best_scores_by_timeframe(summarized_results)
+                    if not _has_new_best_score(current_best_scores, last_declined_suitable_scores):
+                        cycle_index += 1
+                        print(f"{symbol}: no better suitable score since the last review; automatically continuing with expanded-only search.")
+                        continue
                     if _prompt_yes_no(
-                        f"{symbol}: Current Stage Cycle {current_stage_cycle} — move to the next ticker",
+                        f"{symbol}: Current Stage Cycle {current_stage_cycle} — are the current candidates suitable",
                         default=True,
                     ):
+                        if _prompt_yes_no(
+                            f"{symbol}: Current Stage Cycle {current_stage_cycle} — move to the next ticker",
+                            default=True,
+                        ):
+                            final_results.extend(summarized_results)
+                            break
+                        print(f"{symbol}: current candidates kept; stopping before the next ticker.")
                         final_results.extend(summarized_results)
+                        stop_after_current = True
                         break
-                    print(f"{symbol}: current candidates kept; stopping before the next ticker.")
-                    final_results.extend(summarized_results)
-                    stop_after_current = True
-                    break
+                    last_declined_suitable_scores = current_best_scores
+                    cycle_index += 1
+                    print(f"{symbol}: suitable candidates declined; continuing expanded-only search until a better score is found.")
+                    continue
                 no_suitable_cycles = cycle_index + 1
                 should_prompt_continue = (no_suitable_cycles % confirm_continue_every_cycles) == 0
                 if should_prompt_continue and not _prompt_yes_no(
