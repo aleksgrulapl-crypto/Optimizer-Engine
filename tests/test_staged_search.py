@@ -58,13 +58,13 @@ def write_tsv(path: Path, candles) -> None:
 
 class PassesFiltersTests(unittest.TestCase):
     def test_default_thresholds(self):
-        self.assertEqual(DEFAULT_FILTERS["min_win_rate"], 0.40)
-        self.assertEqual(DEFAULT_FILTERS["min_profit_factor"], 1.4)
+        self.assertEqual(DEFAULT_FILTERS["min_win_rate"], 0.50)
+        self.assertEqual(DEFAULT_FILTERS["min_profit_factor"], 1.5)
         self.assertEqual(DEFAULT_FILTERS["min_net_profit"], 0.0)
         self.assertEqual(DEFAULT_FILTERS["max_drawdown_pct"], 0.25)
 
     def test_accepts_candidate_meeting_criteria(self):
-        m = {"net_profit": 100.0, "profit_factor": 1.5, "win_rate": 0.40, "trade_count": 25, "max_drawdown_pct": 0.25}
+        m = {"net_profit": 100.0, "profit_factor": 1.5, "win_rate": 0.50, "trade_count": 25, "max_drawdown_pct": 0.25}
         self.assertTrue(passes_filters(m, DEFAULT_FILTERS))
 
     def test_rejects_boundary_failures(self):
@@ -85,8 +85,8 @@ class PassesFiltersTests(unittest.TestCase):
 
 class StrongCandidateTests(unittest.TestCase):
     def test_default_thresholds(self):
-        self.assertEqual(STRONG_FILTERS["min_win_rate"], 0.40)
-        self.assertEqual(STRONG_FILTERS["min_profit_factor"], 1.4)
+        self.assertEqual(STRONG_FILTERS["min_win_rate"], 0.50)
+        self.assertEqual(STRONG_FILTERS["min_profit_factor"], 1.5)
         self.assertEqual(STRONG_FILTERS["min_net_profit"], 0.0)
         self.assertIn("max_drawdown_pct", STRONG_FILTERS)
 
@@ -159,7 +159,7 @@ class PresetAndGroupingTests(unittest.TestCase):
                 "metrics": {
                     "net_profit": 100.0,
                     "profit_factor": 1.5,
-                    "win_rate": 0.45,
+                    "win_rate": 0.50,
                     "trade_count": 12,
                     "max_drawdown_pct": 0.20,
                 },
@@ -521,13 +521,13 @@ class StagedConfigTests(unittest.TestCase):
         staged = cfg["staged_search"]
         self.assertTrue(staged["enabled"])
         self.assertEqual(staged["confirm_continue_every_cycles"], 12)
-        self.assertEqual(staged["filters"]["min_win_rate"], 0.40)
-        self.assertEqual(staged["filters"]["min_profit_factor"], 1.4)
+        self.assertEqual(staged["filters"]["min_win_rate"], 0.50)
+        self.assertEqual(staged["filters"]["min_profit_factor"], 1.5)
         self.assertEqual(staged["filters"]["min_net_profit"], 0.0)
         self.assertEqual(staged["filters"]["max_drawdown_pct"], 0.25)
         strong = staged["strong_filters"]
-        self.assertEqual(strong["min_win_rate"], 0.40)
-        self.assertEqual(strong["min_profit_factor"], 1.4)
+        self.assertEqual(strong["min_win_rate"], 0.50)
+        self.assertEqual(strong["min_profit_factor"], 1.5)
         self.assertEqual(strong["min_net_profit"], 0.0)
         self.assertEqual(strong["max_drawdown_pct"], 0.25)
 
