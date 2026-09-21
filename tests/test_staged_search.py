@@ -58,13 +58,13 @@ def write_tsv(path: Path, candles) -> None:
 
 class PassesFiltersTests(unittest.TestCase):
     def test_default_thresholds(self):
-        self.assertEqual(DEFAULT_FILTERS["min_win_rate"], 0.40)
-        self.assertEqual(DEFAULT_FILTERS["min_profit_factor"], 1.4)
+        self.assertEqual(DEFAULT_FILTERS["min_win_rate"], 0.50)
+        self.assertEqual(DEFAULT_FILTERS["min_profit_factor"], 1.5)
         self.assertEqual(DEFAULT_FILTERS["min_net_profit"], 0.0)
         self.assertEqual(DEFAULT_FILTERS["max_drawdown_pct"], 0.25)
 
     def test_accepts_candidate_meeting_criteria(self):
-        m = {"net_profit": 100.0, "profit_factor": 1.5, "win_rate": 0.40, "trade_count": 25, "max_drawdown_pct": 0.25}
+        m = {"net_profit": 100.0, "profit_factor": 1.5, "win_rate": 0.50, "trade_count": 25, "max_drawdown_pct": 0.25}
         self.assertTrue(passes_filters(m, DEFAULT_FILTERS))
 
     def test_rejects_boundary_failures(self):
@@ -85,8 +85,8 @@ class PassesFiltersTests(unittest.TestCase):
 
 class StrongCandidateTests(unittest.TestCase):
     def test_default_thresholds(self):
-        self.assertEqual(STRONG_FILTERS["min_win_rate"], 0.40)
-        self.assertEqual(STRONG_FILTERS["min_profit_factor"], 1.4)
+        self.assertEqual(STRONG_FILTERS["min_win_rate"], 0.50)
+        self.assertEqual(STRONG_FILTERS["min_profit_factor"], 1.5)
         self.assertEqual(STRONG_FILTERS["min_net_profit"], 0.0)
         self.assertIn("max_drawdown_pct", STRONG_FILTERS)
 
@@ -159,7 +159,7 @@ class PresetAndGroupingTests(unittest.TestCase):
                 "metrics": {
                     "net_profit": 100.0,
                     "profit_factor": 1.5,
-                    "win_rate": 0.45,
+                    "win_rate": 0.50,
                     "trade_count": 12,
                     "max_drawdown_pct": 0.20,
                 },
@@ -507,7 +507,7 @@ class StagedConfigTests(unittest.TestCase):
         self.assertEqual(staged["strong_filters"], STRONG_FILTERS)
         self.assertIn("expand_radius", staged)
         self.assertIn("time_budget_split", staged)
-        self.assertEqual(staged["confirm_continue_every_cycles"], 6)
+        self.assertEqual(staged["confirm_continue_every_cycles"], 12)
         self.assertEqual(cfg["time_budget_seconds_per_ticker"], 3600)
 
     def test_repo_yaml_loads_staged_defaults(self):
@@ -520,14 +520,14 @@ class StagedConfigTests(unittest.TestCase):
             os.chdir(old_cwd)
         staged = cfg["staged_search"]
         self.assertTrue(staged["enabled"])
-        self.assertEqual(staged["confirm_continue_every_cycles"], 6)
-        self.assertEqual(staged["filters"]["min_win_rate"], 0.40)
-        self.assertEqual(staged["filters"]["min_profit_factor"], 1.4)
+        self.assertEqual(staged["confirm_continue_every_cycles"], 12)
+        self.assertEqual(staged["filters"]["min_win_rate"], 0.50)
+        self.assertEqual(staged["filters"]["min_profit_factor"], 1.5)
         self.assertEqual(staged["filters"]["min_net_profit"], 0.0)
         self.assertEqual(staged["filters"]["max_drawdown_pct"], 0.25)
         strong = staged["strong_filters"]
-        self.assertEqual(strong["min_win_rate"], 0.40)
-        self.assertEqual(strong["min_profit_factor"], 1.4)
+        self.assertEqual(strong["min_win_rate"], 0.50)
+        self.assertEqual(strong["min_profit_factor"], 1.5)
         self.assertEqual(strong["min_net_profit"], 0.0)
         self.assertEqual(strong["max_drawdown_pct"], 0.25)
 
@@ -538,10 +538,10 @@ class StagedConfigTests(unittest.TestCase):
         self.assertEqual(cfg["staged_search"]["filters"], DEFAULT_FILTERS)
  
     def test_confirm_continue_every_cycles_falls_back_when_invalid(self):
-        self.assertEqual(oa._read_positive_int("bad", 6), 6)
-        self.assertEqual(oa._read_positive_int(None, 6), 6)
-        self.assertEqual(oa._read_positive_int(0, 6), 6)
-        self.assertEqual(oa._read_positive_int(-2, 6), 6)
+        self.assertEqual(oa._read_positive_int("bad", 12), 12)
+        self.assertEqual(oa._read_positive_int(None, 12), 12)
+        self.assertEqual(oa._read_positive_int(0, 12), 12)
+        self.assertEqual(oa._read_positive_int(-2, 12), 12)
 
     def test_repo_yaml_wide_initial_grid(self):
         from optimize_all import load_config
@@ -628,7 +628,6 @@ class StagedLoopPromptCadenceTests(unittest.TestCase):
             "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"}],
             "staged_search": {"enabled": True, "confirm_continue_every_cycles": 2},
         })
-        ticker = cfg["tickers"][0]
         preset_result = {
             "symbol": "NVDA",
             "timeframe": "15m",
@@ -680,6 +679,53 @@ class StagedLoopPromptCadenceTests(unittest.TestCase):
         prompt_mock.assert_called_once()
         prompt_message = prompt_mock.call_args.args[0]
         self.assertIn("Current Stage Cycle 2", prompt_message)
+
+    def test_declined_suitable_candidate_waits_for_better_score_before_prompting_again(self):
+        cfg = merge_with_defaults({
+            "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"}],
+            "staged_search": {"enabled": True},
+        })
+        staged_result = {
+            "symbol": "NVDA",
+            "timeframe": "15m",
+            "phase": "expanded",
+            "top": [{"score": 10.0, "params": {}, "metrics": {}}],
+            "evaluated": 1,
+            "elapsed_seconds": 0.0,
+            "note": "",
+            "strong_candidate_found": True,
+        }
+        same_score_result = {
+            **staged_result,
+            "top": [{"score": 10.0, "params": {}, "metrics": {}}],
+        }
+        better_score_result = {
+            **staged_result,
+            "top": [{"score": 11.0, "params": {}, "metrics": {}}],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            old_cwd = os.getcwd()
+            os.chdir(td)
+            try:
+                with mock.patch("optimize_all.load_config", return_value=cfg), \
+                     mock.patch("optimize_all.discover_tsvs_auto", return_value=[]), \
+                     mock.patch("optimize_all._sanity_check_ticker", return_value=(True, "ok")), \
+                     mock.patch("optimize_all._parity_gate_pass", return_value=(True, "ok")), \
+                     mock.patch("optimize_all._run_preset_phase", return_value={"symbol": "NVDA", "timeframe": "15m", "phase": "preset", "top": [], "evaluated": 1, "elapsed_seconds": 0.0, "note": "", "strong_candidate_found": False}), \
+                     mock.patch("optimize_all._run_staged_cycle", return_value=[staged_result]), \
+                     mock.patch("optimize_all._run_expanded_cycle", side_effect=[same_score_result, better_score_result]) as expanded_mock, \
+                     mock.patch("optimize_all._prompt_yes_no", side_effect=[False, True, True]) as prompt_mock, \
+                     mock.patch("optimize_all._write_progress_rows"), \
+                     mock.patch("sys.stdin.isatty", return_value=True):
+                    oa.main()
+            finally:
+                os.chdir(old_cwd)
+        self.assertEqual(expanded_mock.call_count, 2)
+        prompt_messages = [call.args[0] for call in prompt_mock.call_args_list]
+        self.assertEqual(len(prompt_messages), 3)
+        self.assertIn("Current Stage Cycle 1", prompt_messages[0])
+        self.assertIn("Current Stage Cycle 3", prompt_messages[1])
+        self.assertIn("move to the next ticker", prompt_messages[2])
 
 
 if __name__ == "__main__":
