@@ -1,13 +1,11 @@
-"""
-Worker with candidate tracking, resume, phased runs, robustness filtering, and
-per-ticker staged search (initial random -> expanded grids).
-"""
+"""Optimization worker with candidate tracking, resume, and robustness filtering."""
 
 import time
 import csv
 import json
 import itertools
 import hashlib
+import math
 import random
 from pathlib import Path
 from typing import Dict, Any, List, Iterator, Tuple
@@ -38,17 +36,6 @@ STRONG_FILTERS: Dict[str, Any] = {
     "max_drawdown_pct": 0.25,
 }
 
-# Fallback step sizes per parameter when the base grid does not define one
-# (single-valued specs): (float step, integer step).
-NEIGHBORHOOD_STEPS: Dict[str, Tuple[float, int]] = {
-    "stMultiplier": (0.1, 0),
-    "stPeriod": (0.0, 1),
-    "atrSLmult": (0.1, 0),
-    "atrTPmult": (0.2, 0),
-    "emaLen": (0.0, 5),
-}
-
-
 # -------------------------
 # Grid helpers
 # -------------------------
@@ -59,12 +46,16 @@ def _linspace_float(start: float, stop: float, count: int) -> List[float]:
     return [start + i * step for i in range(count)]
 
 
-def _frange_step(start: float, stop: float, step: float) -> List[float]:
+def _frange_step(start: float, stop: float, step: float) -> List[Any]:
     vals = []
     v = float(start)
     eps = 1e-12
+    integer_values = all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for value in (start, stop, step)
+    )
     while v <= stop + eps:
-        vals.append(round(v, 12))
+        vals.append(int(round(v)) if integer_values else round(v, 12))
         v += float(step)
     return vals
 
@@ -90,16 +81,28 @@ def _count_combinations(grid_expanded: Dict[str, List[Any]]) -> int:
     total = 1
     for v in grid_expanded.values():
         total *= max(1, len(v))
-        if total > 10_000_000:
-            return total
     return total
 
 
-def grid_search_params(grid: Dict[str, Any],
-                       search_mode: str = "auto",
-                       n_samples: int = 1000,
-                       max_exhaustive: int = 200_000,
-                       seed: int = 0) -> Iterator[Dict[str, Any]]:
+def _decode_grid_index(
+    index: int,
+    keys: List[str],
+    grid_expanded: Dict[str, List[Any]],
+) -> Dict[str, Any]:
+    candidate: Dict[str, Any] = {}
+    for key in reversed(keys):
+        values = grid_expanded[key]
+        index, value_index = divmod(index, len(values))
+        candidate[key] = values[value_index]
+    return {key: candidate[key] for key in keys}
+
+
+def _grid_search_entries(grid: Dict[str, Any],
+                         search_mode: str = "auto",
+                         n_samples: int = 1000,
+                         max_exhaustive: int = 200_000,
+                         seed: int = 0,
+                         start_position: int = 0) -> Iterator[Tuple[int, Dict[str, Any]]]:
     grid_expanded: Dict[str, List[Any]] = {}
     for k, v in grid.items():
         grid_expanded[k] = _expand_spec(v)
@@ -112,14 +115,29 @@ def grid_search_params(grid: Dict[str, Any],
     keys = list(grid_expanded.keys())
     if mode == "exhaustive":
         lists = [grid_expanded[k] for k in keys]
-        for combo in itertools.product(*lists):
-            yield dict(zip(keys, combo))
+        for position, combo in enumerate(itertools.product(*lists)):
+            yield position, dict(zip(keys, combo))
         return
 
-    random.seed(seed)
+    if mode == "randomized":
+        rng = random.Random(seed)
+        if total <= 1:
+            if start_position <= 0:
+                yield 0, _decode_grid_index(0, keys, grid_expanded)
+            return
+        offset = rng.randrange(total)
+        stride = rng.randrange(1, total)
+        while math.gcd(stride, total) != 1:
+            stride = (stride + 1) % total or 1
+        for position in range(max(0, start_position), total):
+            index = (offset + position * stride) % total
+            yield position, _decode_grid_index(index, keys, grid_expanded)
+        return
+
+    rng = random.Random(seed)
     if total <= n_samples:
-        for combo in itertools.product(*(grid_expanded[k] for k in keys)):
-            yield dict(zip(keys, combo))
+        for position, combo in enumerate(itertools.product(*(grid_expanded[k] for k in keys))):
+            yield position, dict(zip(keys, combo))
         return
 
     seen = set()
@@ -130,13 +148,30 @@ def grid_search_params(grid: Dict[str, Any],
         candidate = {}
         for k in keys:
             vals = grid_expanded[k]
-            v = random.choice(vals)
+            v = rng.choice(vals)
             candidate[k] = v
         keyt = tuple((kk, candidate[kk]) for kk in keys)
         if keyt in seen:
             continue
         seen.add(keyt)
-        yield candidate
+        yield len(seen) - 1, candidate
+
+
+def grid_search_params(grid: Dict[str, Any],
+                       search_mode: str = "auto",
+                       n_samples: int = 1000,
+                       max_exhaustive: int = 200_000,
+                       seed: int = 0,
+                       start_position: int = 0) -> Iterator[Dict[str, Any]]:
+    for _, params in _grid_search_entries(
+        grid,
+        search_mode=search_mode,
+        n_samples=n_samples,
+        max_exhaustive=max_exhaustive,
+        seed=seed,
+        start_position=start_position,
+    ):
+        yield params
 
 
 # -------------------------
@@ -214,20 +249,24 @@ def _safe_pf(pf: float) -> float:
 
 
 def score_candidate(metrics: Dict[str, Any]) -> float:
-    # Priority: PF and drawdown; secondary: net profit + win rate.
+    """Return a stable, bounded score where 100 is the best possible result."""
     net_profit = float(metrics.get("net_profit", 0.0))
     dd_pct = float(metrics.get("max_drawdown_pct", 0.0))
     pf = _safe_pf(float(metrics.get("profit_factor", 0.0)))
     win_rate = float(metrics.get("win_rate", 0.0))
     trade_count = int(metrics.get("trade_count", 0))
 
-    pf_component = pf * 250.0
-    drawdown_penalty = dd_pct * 180.0
-    profit_component = net_profit * 0.6
-    win_component = win_rate * 30.0
-    low_sample_penalty = 25.0 if trade_count < 30 else 0.0
+    pf_component = 40.0 * min(pf / 4.0, 1.0)
+    drawdown_component = 25.0 * (1.0 - min(max(dd_pct, 0.0) / 0.25, 1.0))
+    win_component = 20.0 * min(max(win_rate, 0.0), 1.0)
+    positive_profit = max(net_profit, 0.0)
+    profit_component = 10.0 * positive_profit / (positive_profit + 100.0)
+    sample_component = 5.0 * min(max(trade_count, 0) / 30.0, 1.0)
 
-    return pf_component + profit_component + win_component - drawdown_penalty - low_sample_penalty
+    return round(min(100.0, max(
+        0.0,
+        pf_component + drawdown_component + win_component + profit_component + sample_component,
+    )), 2)
 
 
 def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
@@ -281,78 +320,6 @@ def _sort_candidates(candidates: List[Dict[str, Any]], top_k: int) -> List[Dict[
     return candidates[:max(20, top_k)]
 
 
-def _unique_sorted(values: List[Any]) -> List[Any]:
-    out = []
-    for v in values:
-        if v not in out:
-            out.append(v)
-    out.sort()
-    return out
-
-
-def _dedup_keep_order(values: List[Any]) -> List[Any]:
-    out = []
-    for v in values:
-        if v not in out:
-            out.append(v)
-    return out
-
-
-def build_neighborhood_grid(grid: Dict[str, Any], center: Dict[str, Any], radius: float) -> Dict[str, Any]:
-    """Build a grid centered on ``center`` params around a promising candidate.
-
-    Integer parameters (e.g. stPeriod, emaLen): ``radius`` is a count of grid
-    steps taken in each direction. Float parameters: ``radius`` is the distance
-    covered in each direction, keeping the base grid's step (never coarser than
-    the base grid). Step sizes are inferred from the base grid, falling back to
-    ``NEIGHBORHOOD_STEPS`` for single-valued specs.
-    """
-    neighborhood: Dict[str, Any] = {}
-    for key, spec in grid.items():
-        base_values = _expand_spec(spec)
-        center_value = center.get(key, base_values[0] if base_values else None)
-        try:
-            f_center = float(center_value)
-        except (TypeError, ValueError):
-            neighborhood[key] = _dedup_keep_order([center_value] + list(base_values))
-            continue
-
-        uniq = _unique_sorted(base_values)
-        is_int = bool(uniq) and all(isinstance(v, int) and not isinstance(v, bool) for v in uniq)
-        if len(uniq) >= 2:
-            base_step = round(min(float(uniq[i + 1]) - float(uniq[i]) for i in range(len(uniq) - 1)), 10)
-        else:
-            base_step = 0.0
-
-        if is_int:
-            step = max(1.0, base_step or float(NEIGHBORHOOD_STEPS.get(key, (0.1, 1))[1]))
-            n_steps = max(0, int(round(float(radius))))
-            offsets = [i * step for i in range(-n_steps, n_steps + 1)]
-            values = _unique_sorted([int(round(f_center + o)) for o in offsets])
-        else:
-            r = abs(float(radius))
-            if base_step > 0.0:
-                n_steps = max(1, int(round(r / base_step))) if r > 0.0 else 0
-                step = min(base_step, r / n_steps) if r > 0.0 else base_step
-            else:
-                step = float(NEIGHBORHOOD_STEPS.get(key, (0.1, 1))[0])
-                n_steps = max(0, int(round(r / step))) if step > 0.0 else 0
-            offsets = [i * step for i in range(-n_steps, n_steps + 1)]
-            values = _unique_sorted([round(f_center + o, 10) for o in offsets])
-
-        # Keep values within the base grid's range so neighborhoods stay valid.
-        if len(uniq) >= 2:
-            lo, hi = float(uniq[0]), float(uniq[-1])
-            values = [v for v in values if lo - 1e-9 <= float(v) <= hi + 1e-9]
-            if f_center < lo or f_center > hi:
-                nearest = min(uniq, key=lambda v: abs(float(v) - f_center))
-                values = list(values) + [nearest]
-            values = _unique_sorted(values)
-
-        neighborhood[key] = values if values else _dedup_keep_order([center_value] + list(base_values))
-    return neighborhood
-
-
 # -------------------------
 # Tracking helpers
 # -------------------------
@@ -378,16 +345,20 @@ def _append_completed_run(label: str, phase: str, record: Dict[str, Any]) -> Non
         f.write(json.dumps(record) + "\n")
 
 
-def _load_completed_state(label: str, phase: str) -> Tuple[set, List[Dict[str, Any]], float]:
+def _load_completed_state(label: str, phase: str) -> Tuple[set, List[Dict[str, Any]], float, int]:
     path = Path("completed_runs") / f"{label}_{phase}.jsonl"
     if not path.exists():
-        return set(), [], float("-inf")
+        return set(), [], float("-inf"), 0
     keys = set()
     accepted: Dict[str, Dict[str, Any]] = {}
+    resume_position = 0
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             try:
                 rec = json.loads(line)
+                position = rec.get("_search_position")
+                if isinstance(position, int) and position >= resume_position:
+                    resume_position = position
                 params = rec.get("params", {}) or {}
                 k = rec.get("_param_key") or (_param_key(params) if params else None)
                 if k:
@@ -401,7 +372,7 @@ def _load_completed_state(label: str, phase: str) -> Tuple[set, List[Dict[str, A
                 candidate = {
                     "params": params,
                     "metrics": metrics,
-                    "score": float(score),
+                    "score": score_candidate(metrics),
                 }
                 existing = accepted.get(k)
                 if existing is None or _candidate_rank_key(candidate) > _candidate_rank_key(existing):
@@ -411,11 +382,11 @@ def _load_completed_state(label: str, phase: str) -> Tuple[set, List[Dict[str, A
     candidates = list(accepted.values())
     _sort_candidates(candidates, len(candidates) or 1)
     best_score = candidates[0]["score"] if candidates else float("-inf")
-    return keys, candidates, best_score
+    return keys, candidates, best_score, resume_position
 
 
 def _load_completed_keys(label: str, phase: str) -> set:
-    keys, _, _ = _load_completed_state(label, phase)
+    keys, _, _, _ = _load_completed_state(label, phase)
     return keys
 
 
@@ -555,7 +526,7 @@ def optimize_ticker(cfg: Dict[str, Any],
     filters = {**DEFAULT_FILTERS, **(filters or {})}
 
     candles = load_candles_from_csv(tsv)
-    completed_keys, best_candidates, best_score_so_far = _load_completed_state(label, phase)
+    completed_keys, best_candidates, best_score_so_far, resume_position = _load_completed_state(label, phase)
 
     evaluated = 0
 
@@ -570,7 +541,14 @@ def optimize_ticker(cfg: Dict[str, Any],
 
     scan_counter = 0
 
-    for params in grid_search_params(grid, search_mode=search_mode, n_samples=n_samples, max_exhaustive=max_exhaustive, seed=seed):
+    for search_position, params in _grid_search_entries(
+        grid,
+        search_mode=search_mode,
+        n_samples=n_samples,
+        max_exhaustive=max_exhaustive,
+        seed=seed,
+        start_position=resume_position if search_mode == "randomized" else 0,
+    ):
         if time.time() - start_time > time_budget:
             break
 
@@ -607,6 +585,7 @@ def optimize_ticker(cfg: Dict[str, Any],
             if not passes_filters(metrics, filters):
                 rec = {
                     "timestamp": time.time(),
+                    "_search_position": search_position,
                     "_param_key": key,
                     "params": run_params,
                     "metrics": metrics,
@@ -638,6 +617,7 @@ def optimize_ticker(cfg: Dict[str, Any],
 
             rec = {
                 "timestamp": time.time(),
+                "_search_position": search_position,
                 "_param_key": key,
                 "params": run_params,
                 "metrics": metrics,
@@ -677,86 +657,3 @@ def optimize_ticker(cfg: Dict[str, Any],
         "elapsed_seconds": elapsed,
         "note": robust_note,
     }
-
-
-# -------------------------
-# Staged search
-# -------------------------
-def staged_search(ticker: Dict[str, Any],
-                  grid: Dict[str, Any],
-                  intrabar_paths: List[str],
-                  top_k: int = 5,
-                  time_budget: int = 1800,
-                  n_samples: int = 1000,
-                  seed: int = 0,
-                  max_exhaustive: int = 200000,
-                  execution: Dict[str, Any] = None,
-                  robustness: Dict[str, Any] = None,
-                  staged_cfg: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-    """Run the staged search strategy for a single ticker/timeframe entry.
-
-    Stage order:
-      1) initial   - random sampling of the base grid (wide, loose ranges)
-      2) expanded  - grid expanded around the best suitable initial candidate
-
-    Candidates must satisfy the configured filters (win rate, profit factor,
-    net profit, trade count); ranking prefers lower drawdown on score ties.
-    Later stages are skipped when no suitable candidate is found. Each stage
-    reports ``strong_candidate_found`` so the orchestrator can decide whether
-    to keep expanding or move on.
-    """
-    staged_cfg = staged_cfg or {}
-    filters = staged_cfg.get("filters", None) or None
-    strong_filters = {**STRONG_FILTERS, **(staged_cfg.get("strong_filters", {}) or {})}
-    expand_radius = float(staged_cfg.get("expand_radius", 2.0))
-    budget_split = staged_cfg.get("time_budget_split", [0.6, 0.4]) or [0.6, 0.4]
-    budget_split = [float(x) for x in budget_split]
-    total_weight = sum(budget_split) or 1.0
-
-    def _budget(idx: int) -> int:
-        weight = budget_split[idx] if idx < len(budget_split) else budget_split[-1]
-        return max(1, int(time_budget * weight / total_weight))
-
-    def _mark_strong(res: Dict[str, Any]) -> Dict[str, Any]:
-        top = res.get("top", []) or []
-        res["strong_candidate_found"] = any(
-            is_strong_candidate(c.get("metrics", {}) or {}, strong_filters) for c in top
-        )
-        return res
-
-    def _run(phase: str, phase_grid: Dict[str, Any], mode: str, samples: int, stage_seed: int) -> Dict[str, Any]:
-        return _mark_strong(optimize_ticker(
-            ticker,
-            phase_grid,
-            intrabar_paths,
-            top_k=top_k,
-            time_budget=_budget(len(results)),
-            search_mode=mode,
-            n_samples=samples,
-            seed=stage_seed,
-            max_exhaustive=max_exhaustive,
-            execution=execution,
-            robustness=robustness,
-            phase=phase,
-            filters=filters,
-        ))
-
-    results: List[Dict[str, Any]] = []
-
-    # Stage 1: initial random grid search (per-ticker seed spreads sampled
-    # points across parallel workers, taking pressure off the CPU).
-    stage_seed = derive_seed(seed, ticker.get("symbol"), ticker.get("timeframe"))
-    results.append(_run("initial", grid, "sample", n_samples, stage_seed))
-    top = results[-1].get("top", []) or []
-    if not top:
-        return results
-
-    # Stage 2: expanded grid around the best suitable candidate
-    expanded_grid = build_neighborhood_grid(grid, top[0].get("params", {}), expand_radius)
-    expand_samples = max(n_samples, int(staged_cfg.get("expand_samples", 2 * n_samples)))
-    results.append(_run("expanded", expanded_grid, "sample", expand_samples, stage_seed + 1))
-    top = results[-1].get("top", []) or []
-    if not top:
-        return results
-
-    return results
