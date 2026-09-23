@@ -2,7 +2,7 @@
 # Workflow: data sanity -> parity check -> randomized unified grid per
 # ticker/timeframe -> robustness validation -> manual gate
 # A ticker is only treated as ready to move on once it has a suitable candidate
-# (positive net profit, PF >= 1.5, WR >= 50%, low drawdown) and you approve the
+# (positive net profit, PF >= 1.4, WR >= 45%, 100+ trades, low drawdown) and you approve the
 # prompt to continue to the next ticker below.
 # Set Status: Completed to skip a ticker you are happy with; use Incomplete to
 # keep it in the optimization queue. Omitted Status values default to Incomplete.
@@ -463,8 +463,8 @@ grid:
     step: 0.1
   emaLen:
     start: 40
-    stop: 300
-    step: 10
+    stop: 240
+    step: 1
 
 random_seed: 42
 
@@ -476,17 +476,17 @@ time_budget_seconds_per_ticker: 3600
 # from 0 to 100, with lower drawdown preferred when scores tie.
 optimization:
   filters:
-    min_win_rate: 0.50        # at least 50% win rate
-    min_profit_factor: 1.5    # profit factor of at least 1.5
+    min_win_rate: 0.45        # at least 45% win rate
+    min_profit_factor: 1.4    # profit factor of at least 1.4
     min_net_profit: 0.0       # strictly positive net profit
-    min_trades: 10
+    min_trades: 100
     max_drawdown_pct: 0.25    # low max drawdown (<= 25%)
   # strong-candidate bar used by the interactive gating summary
   strong_filters:
-    min_win_rate: 0.50            # at least 50% win rate
-    min_profit_factor: 1.5        # profit factor of at least 1.5
+    min_win_rate: 0.45            # at least 45% win rate
+    min_profit_factor: 1.4        # profit factor of at least 1.4
     min_net_profit: 0.0           # strictly positive net profit
-    min_trades: 10
+    min_trades: 100
     max_drawdown_pct: 0.25        # low max drawdown (<= 25%)
   confirm_continue_every_cycles: 3  # prompt every third no-suitable cycle
 
