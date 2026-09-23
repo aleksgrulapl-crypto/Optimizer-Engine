@@ -1,11 +1,6 @@
 # backtesting configuration
-# Workflow: data sanity -> parity check -> preset check -> staged search per ticker/timeframe -> robustness validation
-# Staged search runs one symbol at a time for every ticker entry below:
-#   1) initial  - random samples of the wide base grid (grid_constrained), seeded
-#                 per ticker so parallel workers explore different grid points
-#   2) expanded - grid narrowed around the best suitable candidate from stage 1
-#   3) gate     - review the current candidates, then either move on or keep
-#                 widening the expanded search on the current ticker
+# Workflow: data sanity -> parity check -> randomized unified grid per
+# ticker/timeframe -> robustness validation -> manual gate
 # A ticker is only treated as ready to move on once it has a suitable candidate
 # (positive net profit, PF >= 1.5, WR >= 50%, low drawdown) and you approve the
 # prompt to continue to the next ticker below.
@@ -445,101 +440,41 @@ parity:
   require_tv_export: false
   require_parity_ok: true
 
-# constrained search: initial wide random grid (loose ranges to allow for
-# more sophisticated entries); sampled randomly with a per-ticker seed to
-# take pressure off the CPU
-grid_constrained:
+# One complete grid. The worker traverses all 25,076,142 combinations in a
+# deterministic randomized order without loading them into memory. Completed
+# combinations and the traversal position are persisted, so restarts continue
+# through unevaluated combinations.
+grid:
   stMultiplier:
-    start: 1.0
-    stop: 5.0
-    step: 0.2
-  stPeriod:
-    min: 6
-    max: 18
-    count: 13
-  atrSLmult:
-    start: 1.0
-    stop: 2.6
-    step: 0.2
-  atrTPmult:
-    start: 1.6
+    start: 2.0
     stop: 10.0
-    step: 0.4
-  emaLen:
-    min: 20
-    max: 300
-    count: 15
-
-# expanded search: widen around constrained findings
-grid_expand:
-  stMultiplier:
-    start: 1.0
-    stop: 3.6
-    step: 0.2
+    step: 0.1
   stPeriod:
-    min: 4
-    max: 20
-    count: 9
+    start: 5
+    stop: 18
+    step: 1
   atrSLmult:
-    start: 0.6
-    stop: 2.6
-    step: 0.2
-  atrTPmult:
-    min: 1.5
-    max: 7.0
-    count: 12
-  emaLen:
-    min: 10
-    max: 200
-    count: 10
-
-# fallback grid: used when constrained phase finds no suitable matches.
-# Applies relaxed parameter ranges to give difficult tickers a second chance
-# before the engine moves on to the next ticker.
-grid_fallback:
-  stMultiplier:
     start: 1.0
-    stop: 4.0
-    step: 0.4
-  stPeriod:
-    min: 4
-    max: 24
-    count: 6
-  atrSLmult:
-    start: 0.5
     stop: 3.0
-    step: 0.5
+    step: 0.1
   atrTPmult:
-    min: 1.5
-    max: 8.0
-    count: 8
+    start: 1.2
+    stop: 5.0
+    step: 0.1
   emaLen:
-    min: 10
-    max: 200
-    count: 6
+    start: 40
+    stop: 300
+    step: 10
 
-search_mode: auto
-n_samples_per_ticker: 5000
 random_seed: 42
-max_exhaustive: 500000
 
-parallel_workers: 2
-top_k_per_ticker: 5
-# about an hour per ticker/timeframe entry to allow as many finds as possible
+top_k_per_ticker: 10
+# One cycle spends up to one hour on each timeframe entry.
 time_budget_seconds_per_ticker: 3600
 
-# staged search: preset check -> initial random grid -> expanded grid around
-# the best suitable candidate.
-# A candidate is suitable when it passes all filters; candidates are ranked by
-# score, preferring lower drawdown on ties. optimize_all.py now runs one symbol
-# at a time, evaluates the available timeframe presets first, and prompts
-# before moving to the next ticker. If you answer "no" to the suitability
-# prompt, it keeps widening the expanded search on the current ticker.
-# When no suitable candidate is found, expanded-only search auto-continues and
-# asks for confirmation every N staged cycles (default 6).
-# Set enabled: false to fall back to the legacy constrained/fallback/expanded phases.
-staged_search:
-  enabled: true
+# A candidate is suitable when it passes all filters. Candidates are scored
+# from 0 to 100, with lower drawdown preferred when scores tie.
+optimization:
   filters:
     min_win_rate: 0.50        # at least 50% win rate
     min_profit_factor: 1.5    # profit factor of at least 1.5
@@ -553,9 +488,7 @@ staged_search:
     min_net_profit: 0.0           # strictly positive net profit
     min_trades: 10
     max_drawdown_pct: 0.25        # low max drawdown (<= 25%)
-  expand_radius: 2.0          # expanded stage spans +/- radius grid steps per parameter
-  time_budget_split: [0.6, 0.4]  # share of the per-ticker budget per stage
-  confirm_continue_every_cycles: 12  # prompt every N no-suitable cycles before continuing
+  confirm_continue_every_cycles: 3  # prompt every third no-suitable cycle
 
 # optional post-optimization stability check on top candidates
 robustness:
