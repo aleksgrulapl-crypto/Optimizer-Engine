@@ -33,7 +33,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "stPeriod": {"start": 5, "stop": 18, "step": 1},
         "atrSLmult": {"start": 1.0, "stop": 3.0, "step": 0.1},
         "atrTPmult": {"start": 1.2, "stop": 5.0, "step": 0.1},
-        "emaLen": {"start": 40, "stop": 300, "step": 10},
+        "emaLen": {"start": 40, "stop": 240, "step": 1},
     },
     "intrabar_paths": ["ohlc"],
     "top_k_per_ticker": 10,

@@ -42,10 +42,10 @@ class UnifiedGridConfigTests(unittest.TestCase):
         self.assertEqual(grid["stPeriod"], {"start": 5, "stop": 18, "step": 1})
         self.assertEqual(grid["atrSLmult"], {"start": 1.0, "stop": 3.0, "step": 0.1})
         self.assertEqual(grid["atrTPmult"], {"start": 1.2, "stop": 5.0, "step": 0.1})
-        self.assertEqual(grid["emaLen"], {"start": 40, "stop": 300, "step": 10})
+        self.assertEqual(grid["emaLen"], {"start": 40, "stop": 240, "step": 1})
         expanded = {key: ow._expand_spec(spec) for key, spec in grid.items()}
-        self.assertEqual([len(values) for values in expanded.values()], [81, 14, 21, 39, 27])
-        self.assertEqual(ow._count_combinations(expanded), 25_076_142)
+        self.assertEqual([len(values) for values in expanded.values()], [81, 14, 21, 39, 201])
+        self.assertEqual(ow._count_combinations(expanded), 186_677_946)
         self.assertTrue(all(isinstance(value, int) for value in expanded["stPeriod"]))
         self.assertTrue(all(isinstance(value, int) for value in expanded["emaLen"]))
 
@@ -58,6 +58,18 @@ class UnifiedGridConfigTests(unittest.TestCase):
         self.assertNotIn("staged_search", config)
         self.assertNotIn("grid_constrained", config)
         self.assertNotIn("grid_expand", config)
+
+    def test_default_candidate_requirements_match_requested_thresholds(self):
+        config = oa.merge_with_defaults({})
+        expected = {
+            "min_win_rate": 0.45,
+            "min_profit_factor": 1.4,
+            "min_net_profit": 0.0,
+            "min_trades": 100,
+            "max_drawdown_pct": 0.25,
+        }
+        self.assertEqual(config["optimization"]["filters"], expected)
+        self.assertEqual(config["optimization"]["strong_filters"], expected)
 
     def test_repo_yaml_matches_unified_defaults(self):
         old_cwd = Path.cwd()
