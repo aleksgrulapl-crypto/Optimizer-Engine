@@ -138,7 +138,7 @@ def _sanity_check_ticker(ticker: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"{symbol}: missing tsv file {tsv}"
     timeframe = str(ticker.get("timeframe", "15m")).strip().lower()
     if not re.fullmatch(r"\d+[mhd]", timeframe):
-        return False, f"{symbol}: invalid timeframe '{timeframe}' (expected values like 15m or 30m)"
+        return False, f"{symbol}: invalid timeframe '{timeframe}' (expected values like 15m, 30m, or 60m)"
     try:
         candles = load_candles_from_csv(tsv)
     except Exception as exc:
@@ -190,7 +190,7 @@ def _write_progress_rows(out_path: Path, rows: List[List[Any]]) -> None:
 
 def _timeframe_sort_key(timeframe: Any) -> Tuple[int, str]:
     normalized = str(timeframe or "").strip().lower()
-    return {"15m": 0, "30m": 1}.get(normalized, 99), normalized
+    return {"15m": 0, "30m": 1, "60m": 2}.get(normalized, 99), normalized
 
 
 def _group_tickers_by_symbol(

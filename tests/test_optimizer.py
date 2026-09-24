@@ -82,6 +82,21 @@ class UnifiedGridConfigTests(unittest.TestCase):
         self.assertEqual(config["top_k_per_ticker"], 10)
         self.assertEqual(config["optimization"]["confirm_continue_every_cycles"], 3)
 
+    def test_repo_yaml_configures_all_three_timeframes_per_symbol(self):
+        old_cwd = Path.cwd()
+        os.chdir(REPO_ROOT)
+        try:
+            tickers = oa.load_config()["tickers"]
+        finally:
+            os.chdir(old_cwd)
+        grouped = oa._group_tickers_by_symbol(tickers)
+        self.assertTrue(grouped)
+        for _, entries in grouped:
+            self.assertEqual(
+                [entry["timeframe"] for entry in entries],
+                ["15m", "30m", "60m"],
+            )
+
     def test_invalid_prompt_cadence_falls_back_to_three(self):
         self.assertEqual(oa._read_positive_int("bad", 3), 3)
         self.assertEqual(oa._read_positive_int(0, 3), 3)
