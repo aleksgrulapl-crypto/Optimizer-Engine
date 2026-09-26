@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import optimize_all as oa
 import optimizer_worker as ow
+from presets import get_presets, normalize_timeframe
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -100,6 +101,15 @@ class UnifiedGridConfigTests(unittest.TestCase):
     def test_invalid_prompt_cadence_falls_back_to_three(self):
         self.assertEqual(oa._read_positive_int("bad", 3), 3)
         self.assertEqual(oa._read_positive_int(0, 3), 3)
+
+
+class PresetTimeframeTests(unittest.TestCase):
+    def test_normalizes_one_hour_timeframe(self):
+        self.assertEqual(normalize_timeframe("60m"), "60M")
+        self.assertEqual(normalize_timeframe("60min"), "60M")
+
+    def test_one_hour_timeframe_uses_closest_existing_preset(self):
+        self.assertEqual(get_presets("AMAT", "60m"), get_presets("AMAT", "30m"))
 
 
 class RandomizedGridTests(unittest.TestCase):

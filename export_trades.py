@@ -73,7 +73,7 @@ def main() -> None:
     parser.add_argument("--input", "-i", required=True, help="Path to candles CSV/TSV file.")
     parser.add_argument("--output", "-o", default="trades_export.csv", help="Output CSV path.")
     parser.add_argument("--ticker", "-t", default="NVDA", help="Ticker preset to use.")
-    parser.add_argument("--timeframe", default=None, help="Preset timeframe to use (15M or 30M). Defaults to input filename inference.")
+    parser.add_argument("--timeframe", default=None, help="Preset timeframe to use (15M, 30M, or 60M). Defaults to input filename inference.")
     parser.add_argument("--intrabar-path", choices=["ohlc", "olhc"], default="ohlc")
     parser.add_argument("--slippage", type=float, default=0.0)
     parser.add_argument("--commission-pct", type=float, default=0.0)
