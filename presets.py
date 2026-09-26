@@ -37,10 +37,17 @@ PRESETS = {
 
 def normalize_timeframe(timeframe: str = "15M") -> str:
     normalized = str(timeframe).strip().upper()
-    aliases = {"15M": "15M", "30M": "30M", "15MIN": "15M", "30MIN": "30M"}
+    aliases = {
+        "15M": "15M",
+        "30M": "30M",
+        "60M": "60M",
+        "15MIN": "15M",
+        "30MIN": "30M",
+        "60MIN": "60M",
+    }
     normalized = aliases.get(normalized, normalized)
-    if normalized not in {"15M", "30M"}:
-        raise ValueError("timeframe must be '15M' or '30M'")
+    if normalized not in {"15M", "30M", "60M"}:
+        raise ValueError("timeframe must be '15M', '30M', or '60M'")
     return normalized
 
 
@@ -51,6 +58,7 @@ def get_presets(ticker: str, timeframe: str = "15M") -> Dict[str, float]:
     if ticker not in PRESETS:
         raise ValueError(f"Unsupported ticker: {ticker}")
 
+    # Until dedicated 60-minute presets are available, use the closest existing seed.
     values = PRESETS[ticker][0 if timeframe == "15M" else 1]
     keys = ("stMultiplier", "stPeriod", "atrSLmult", "atrTPmult", "emaLen")
     return dict(zip(keys, values))
