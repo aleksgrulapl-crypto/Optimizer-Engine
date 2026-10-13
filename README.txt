@@ -27,11 +27,15 @@ Workflow (required order):
 5) Robustness check
 6) Finalize presets
 
-Each ticker/timeframe entry gets about an hour of budget (configurable via
-time_budget_seconds_per_ticker, i.e. roughly 30m per 15M preset and 30m per
-30M preset for a ticker). optimize_all.py now runs one symbol at a time,
-checks both timeframe presets first, and then asks whether the current
-candidates are suitable before it will move on. The acceptance bar is
+Each ticker gets a 3 hour budget (optimization.symbol_time_budget_seconds),
+split evenly across its incomplete timeframes (1h each for 15m/30m/60m; if
+other timeframes are Status: Completed the remaining ones share the full 3h).
+optimize_all.py runs 4 tickers in parallel (optimization.workers) and never
+prompts, so it can run unattended 24/7. Each timeframe runs
+optimization.rounds_per_timeframe (3) rounds of equal length; it moves on as
+soon as a round finds a suitable candidate strictly better than the best that
+existed when the run started (the initial/previous best never counts), or after
+3 rounds without one. The acceptance bar is
 positive net profit, profit factor >= 1.4, win rate >= 40%, and a reasonably
 low max drawdown (<= 25% by default).
 

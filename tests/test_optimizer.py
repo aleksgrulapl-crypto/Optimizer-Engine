@@ -50,11 +50,11 @@ class UnifiedGridConfigTests(unittest.TestCase):
         self.assertTrue(all(isinstance(value, int) for value in expanded["stPeriod"]))
         self.assertTrue(all(isinstance(value, int) for value in expanded["emaLen"]))
 
-    def test_defaults_use_one_hour_cycles_top_ten_and_third_cycle_prompt(self):
+    def test_defaults_use_one_hour_cycles_top_ten_and_parallel_workers(self):
         config = oa.merge_with_defaults({})
         self.assertEqual(config["time_budget_seconds_per_ticker"], 3600)
         self.assertEqual(config["top_k_per_ticker"], 10)
-        self.assertEqual(config["optimization"]["confirm_continue_every_cycles"], 3)
+        self.assertEqual(config["optimization"]["workers"], 4)
         self.assertEqual(config["robustness"]["evaluate_top_n"], 10)
         self.assertNotIn("staged_search", config)
         self.assertNotIn("grid_constrained", config)
@@ -81,7 +81,7 @@ class UnifiedGridConfigTests(unittest.TestCase):
             os.chdir(old_cwd)
         self.assertEqual(config["grid"], oa.DEFAULT_CONFIG["grid"])
         self.assertEqual(config["top_k_per_ticker"], 10)
-        self.assertEqual(config["optimization"]["confirm_continue_every_cycles"], 3)
+        self.assertEqual(config["optimization"]["workers"], 4)
 
     def test_repo_yaml_configures_all_three_timeframes_per_symbol(self):
         old_cwd = Path.cwd()
@@ -353,67 +353,53 @@ class GridCycleTests(unittest.TestCase):
         self.assertEqual(kwargs["phase"], "grid")
         self.assertFalse(result["strong_candidate_found"])
 
-    def test_no_candidate_prompt_occurs_on_third_cycle(self):
-        config = oa.merge_with_defaults({
-            "tickers": [{"symbol": "NVDA", "timeframe": "15m", "tsv": "ignored.tsv"}],
-        })
-        result = {
-            "symbol": "NVDA",
-            "timeframe": "15m",
-            "phase": "grid",
-            "top": [],
-            "evaluated": 1,
-            "elapsed_seconds": 0.0,
-            "note": "",
-            "strong_candidate_found": False,
-        }
-        with tempfile.TemporaryDirectory() as temp_dir:
-            old_cwd = Path.cwd()
-            os.chdir(temp_dir)
-            try:
-                with mock.patch("optimize_all.load_config", return_value=config), \
-                     mock.patch("optimize_all._sanity_check_ticker", return_value=(True, "ok")), \
-                     mock.patch("optimize_all._parity_gate_pass", return_value=(True, "ok")), \
-                     mock.patch("optimize_all._run_grid_cycle", return_value=result) as run_cycle, \
-                     mock.patch("optimize_all._prompt_yes_no", return_value=False) as prompt, \
-                     mock.patch("optimize_all._write_progress_rows"), \
-                     mock.patch("sys.stdin.isatty", return_value=True):
-                    oa.main()
-            finally:
-                os.chdir(old_cwd)
-        self.assertEqual(run_cycle.call_count, 3)
-        prompt.assert_called_once()
-        self.assertIn("Current Cycle 3", prompt.call_args.args[0])
-
-    def test_no_better_candidate_prompt_occurs_every_third_cycle(self):
+    def test_no_better_candidate_runs_three_rounds_then_moves_on(self):
         config = oa.merge_with_defaults({})
         result = {
-            "symbol": "NVDA",
-            "timeframe": "15m",
-            "phase": "grid",
-            "top": [{"score": 75.0, "params": {}, "metrics": {}}],
-            "evaluated": 1,
-            "elapsed_seconds": 0.0,
-            "note": "",
-            "strong_candidate_found": True,
+            "symbol": "NVDA", "timeframe": "15m", "phase": "grid",
+            "top": [], "evaluated": 1, "elapsed_seconds": 0.0, "note": "",
         }
-        with mock.patch("optimize_all._run_grid_cycle", return_value=result) as run_cycle, \
-             mock.patch("optimize_all._prompt_yes_no", side_effect=[False, False]) as prompt, \
-             mock.patch("sys.stdin.isatty", return_value=True):
-            results, stop = oa._run_symbol(
-                "NVDA",
-                [{"symbol": "NVDA", "timeframe": "15m"}],
-                config["grid"],
-                config,
-                [],
+        with mock.patch("optimize_all._load_completed_state", return_value=(set(), [], float("-inf"), 0)), \
+             mock.patch("optimize_all._run_grid_cycle", return_value=dict(result)) as run_cycle:
+            out = oa._run_timeframe(
+                {"symbol": "NVDA", "timeframe": "15m"}, config["grid"], config, 3600, []
             )
-        self.assertFalse(stop)
-        self.assertEqual(results[0]["top"][0]["score"], 75.0)
-        self.assertEqual(run_cycle.call_count, 4)
-        self.assertEqual(prompt.call_count, 2)
-        self.assertIn("are the current candidates suitable", prompt.call_args_list[0].args[0])
-        self.assertIn("no better candidate found in 3 cycle(s)", prompt.call_args_list[1].args[0])
+        self.assertEqual(run_cycle.call_count, 3)
+        self.assertEqual(run_cycle.call_args.args[3], 1200)
+        self.assertFalse(out["improved"])
 
+    def test_initial_best_is_not_a_new_candidate(self):
+        strong = {
+            "net_profit": 10.0, "profit_factor": 2.0, "win_rate": 0.6,
+            "trade_count": 200, "max_drawdown_pct": 0.1,
+        }
+        result = {"top": [{"score": 75.0, "params": {}, "metrics": strong}]}
+        filters = dict(oa.STRONG_FILTERS)
+        self.assertFalse(oa._found_better_candidate(result, 75.0, filters))
+        self.assertTrue(oa._found_better_candidate(result, 70.0, filters))
+        self.assertTrue(oa._found_better_candidate(result, float("-inf"), filters))
+
+    def test_better_candidate_stops_rounds_early(self):
+        config = oa.merge_with_defaults({})
+        result = {
+            "symbol": "NVDA", "timeframe": "15m", "phase": "grid",
+            "top": [{"score": 80.0, "params": {}, "metrics": {}}],
+            "evaluated": 1, "elapsed_seconds": 0.0, "note": "",
+        }
+        with mock.patch("optimize_all._load_completed_state", return_value=(set(), [], 70.0, 0)), \
+             mock.patch("optimize_all._found_better_candidate", return_value=True), \
+             mock.patch("optimize_all._run_grid_cycle", return_value=result) as run_cycle:
+            out = oa._run_timeframe(
+                {"symbol": "NVDA", "timeframe": "15m"}, config["grid"], config, 3600, []
+            )
+        self.assertEqual(run_cycle.call_count, 1)
+        self.assertTrue(out["improved"])
+
+    def test_symbol_budget_is_split_across_incomplete_timeframes(self):
+        config = oa.merge_with_defaults({})
+        with mock.patch("optimize_all._run_timeframe", return_value={"top": []}) as run_tf:
+            oa._run_symbol("NVDA", [{"timeframe": "15m"}], config["grid"], config, [])
+        self.assertEqual(run_tf.call_args.args[3], 10800)
     def test_completed_status_skips_ticker(self):
         config = oa.merge_with_defaults({
             "tickers": [{
