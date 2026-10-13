@@ -4,7 +4,7 @@ import csv
 import json
 import os
 import re
-import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from time import sleep, time
 from typing import Any, Dict, List, Tuple
@@ -16,6 +16,8 @@ from optimizer_worker import (
     derive_seed,
     is_strong_candidate,
     optimize_ticker,
+    _load_completed_state,
+    _run_label,
 )
 
 try:
@@ -53,7 +55,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "optimization": {
         "filters": dict(DEFAULT_FILTERS),
         "strong_filters": dict(STRONG_FILTERS),
-        "confirm_continue_every_cycles": 3,
+        "workers": 4,
+        "symbol_time_budget_seconds": 10800,
+        "rounds_per_timeframe": 3,
     },
     "robustness": {
         "enabled": True,
@@ -252,56 +256,6 @@ def _append_progress_row(
     ])
 
 
-def _best_scores_by_timeframe(results: List[Dict[str, Any]]) -> Dict[str, float]:
-    scores: Dict[str, float] = {}
-    for result in results:
-        top = result.get("top", []) or []
-        if not top:
-            continue
-        try:
-            score = float(top[0].get("score"))
-        except (TypeError, ValueError):
-            continue
-        timeframe = str(result.get("timeframe", "")).strip().lower()
-        scores[timeframe] = score
-    return scores
-
-
-def _has_new_best_score(
-    current_scores: Dict[str, float],
-    previous_scores: Dict[str, float],
-) -> bool:
-    return any(
-        score > previous_scores.get(timeframe, float("-inf"))
-        for timeframe, score in current_scores.items()
-    )
-
-
-def _prompt_yes_no(message: str, default: Any = None) -> bool:
-    if default is None:
-        prompt = f"{message} [y/n]: "
-    else:
-        prompt = f"{message} [{'Y' if default else 'y'}/{'n' if default else 'N'}]: "
-    while True:
-        try:
-            reply = input(prompt).strip().lower()
-        except EOFError:
-            if default is None:
-                raise RuntimeError(f"No interactive input available for prompt: {message}")
-            print(
-                f"{message}: no interactive input available; "
-                f"defaulting to {'yes' if default else 'no'}."
-            )
-            return bool(default)
-        if not reply and default is not None:
-            return bool(default)
-        if reply in {"y", "yes"}:
-            return True
-        if reply in {"n", "no"}:
-            return False
-        print("Please answer y or n.")
-
-
 def _read_positive_int(value: Any, default: int) -> int:
     try:
         parsed = int(value)
@@ -383,18 +337,21 @@ def _run_grid_cycle(
     ticker: Dict[str, Any],
     grid: Dict[str, Any],
     config: Dict[str, Any],
+    time_budget: Any = None,
 ) -> Dict[str, Any]:
     optimization_config = config.get("optimization", {}) or {}
     strong_filters = {
         **STRONG_FILTERS,
         **(optimization_config.get("strong_filters", {}) or {}),
     }
+    if time_budget is None:
+        time_budget = int(config.get("time_budget_seconds_per_ticker", 3600))
     result = optimize_ticker(
         ticker,
         grid,
         [str((config.get("execution", {}) or {}).get("intrabar_path", "ohlc"))],
         top_k=int(config.get("top_k_per_ticker", 10)),
-        time_budget=int(config.get("time_budget_seconds_per_ticker", 3600)),
+        time_budget=max(1, int(time_budget)),
         search_mode="randomized",
         seed=derive_seed(
             int(config.get("random_seed", 0)),
@@ -409,135 +366,111 @@ def _run_grid_cycle(
     return _mark_suitable(result, strong_filters)
 
 
+def _found_better_candidate(
+    result: Dict[str, Any],
+    baseline_score: float,
+    strong_filters: Dict[str, Any],
+) -> bool:
+    """True only if the best candidate is suitable and strictly beats the
+    best score that existed before this run started (the initial best)."""
+    top = result.get("top", []) or []
+    if not top:
+        return False
+    try:
+        score = float(top[0].get("score"))
+    except (TypeError, ValueError):
+        return False
+    return score > baseline_score and is_strong_candidate(
+        top[0].get("metrics", {}) or {}, strong_filters
+    )
+
+
+def _run_timeframe(
+    ticker: Dict[str, Any],
+    grid: Dict[str, Any],
+    config: Dict[str, Any],
+    timeframe_budget: float,
+    progress_rows: List[List[Any]],
+) -> Dict[str, Any]:
+    optimization_config = config.get("optimization", {}) or {}
+    rounds = _read_positive_int(optimization_config.get("rounds_per_timeframe", 3), 3)
+    strong_filters = {
+        **STRONG_FILTERS,
+        **(optimization_config.get("strong_filters", {}) or {}),
+    }
+    label = _run_label(ticker.get("symbol"), ticker.get("timeframe"))
+    _, _, baseline_score, _ = _load_completed_state(label, "grid")
+    round_budget = max(1.0, timeframe_budget / rounds)
+    symbol = str(ticker.get("symbol", "")).strip().upper()
+    timeframe = str(ticker.get("timeframe", "")).strip().lower()
+
+    result: Dict[str, Any] = {}
+    for round_index in range(1, rounds + 1):
+        print(f"{symbol} {timeframe}: round {round_index}/{rounds} ({round_budget:.0f}s)")
+        result = _run_grid_cycle(ticker, grid, config, round_budget)
+        _append_progress_row(progress_rows, result)
+        if _found_better_candidate(result, baseline_score, strong_filters):
+            print(f"{symbol} {timeframe}: better candidate found; moving on.")
+            result["improved"] = True
+            return result
+        if int(result.get("evaluated", 0) or 0) <= 0:
+            print(f"{symbol} {timeframe}: no new combinations left; moving on.")
+            break
+    print(f"{symbol} {timeframe}: no better candidate found; moving on.")
+    result["improved"] = False
+    return result
+
+
 def _run_symbol(
     symbol: str,
     symbol_tickers: List[Dict[str, Any]],
     grid: Dict[str, Any],
     config: Dict[str, Any],
     progress_rows: List[List[Any]],
-) -> Tuple[List[Dict[str, Any]], bool]:
+) -> List[Dict[str, Any]]:
     optimization_config = config.get("optimization", {}) or {}
-    prompt_cadence = _read_positive_int(
-        optimization_config.get("confirm_continue_every_cycles", 3),
-        3,
-    )
-    interactive_prompts = sys.stdin.isatty()
-    latest_by_timeframe: Dict[str, Dict[str, Any]] = {}
-    last_declined_suitable_scores: Dict[str, float] = {}
-    cycles_without_better = 0
-    cycle_index = 0
+    symbol_budget = float(optimization_config.get("symbol_time_budget_seconds", 10800))
+    timeframe_budget = symbol_budget / max(1, len(symbol_tickers))
 
     print(f"\nStarting {symbol} with {len(symbol_tickers)} timeframe(s)")
-    while True:
-        current_cycle = cycle_index + 1
-        print(f"{symbol}: grid cycle {current_cycle}")
-        for ticker in symbol_tickers:
-            result = _run_grid_cycle(ticker, grid, config)
-            timeframe = str(ticker.get("timeframe", "")).strip().lower()
-            latest_by_timeframe[timeframe] = result
-            _append_progress_row(progress_rows, result)
+    results: List[Dict[str, Any]] = []
+    for ticker in symbol_tickers:
+        results.append(_run_timeframe(ticker, grid, config, timeframe_budget, progress_rows))
+    _print_symbol_summary(symbol, results)
+    return results
 
-        summarized_results = [
-            latest_by_timeframe[key]
-            for key in sorted(latest_by_timeframe, key=_timeframe_sort_key)
-        ]
-        _print_symbol_summary(symbol, summarized_results)
-        suitable_found = any(
-            bool(result.get("strong_candidate_found"))
-            for result in summarized_results
-        )
-        print(
-            f"{symbol}: optimizer "
-            f"{'found' if suitable_found else 'did not find'} "
-            "a candidate that meets the gating thresholds."
-        )
 
-        if not interactive_prompts:
-            if suitable_found:
-                print(
-                    f"{symbol}: no interactive input available; "
-                    "accepting the gated candidates and moving on."
-                )
-                return summarized_results, False
-            evaluated_this_cycle = sum(
-                int(result.get("evaluated", 0) or 0)
-                for result in summarized_results
+def _process_symbol(
+    symbol: str,
+    symbol_tickers: List[Dict[str, Any]],
+    grid: Dict[str, Any],
+    config: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[List[Any]]]:
+    """Worker entry point (runs in a child process)."""
+    progress_rows: List[List[Any]] = []
+    with _TickerLock(symbol) as lock_acquired:
+        if not lock_acquired:
+            note = (
+                f"{symbol}: skipped because another optimizer process "
+                "is already working on this ticker"
             )
-            if evaluated_this_cycle <= 0:
-                print(
-                    f"{symbol}: no interactive input available, no gated candidate "
-                    "found, and no new combinations evaluated; stopping."
-                )
-                return summarized_results, True
-            cycle_index += 1
-            print(
-                f"{symbol}: no interactive input available and no gated candidate "
-                "found; automatically continuing the grid."
+            print(note)
+            progress_rows.extend(
+                [symbol, "lock", "skipped", 0, 0, "", f"{note} ({t.get('timeframe', '')})"]
+                for t in symbol_tickers
             )
-            continue
-
-        if suitable_found:
-            current_best_scores = _best_scores_by_timeframe(summarized_results)
-            if not _has_new_best_score(
-                current_best_scores,
-                last_declined_suitable_scores,
-            ):
-                cycles_without_better += 1
-                if (
-                    cycles_without_better % prompt_cadence == 0
-                    and not _prompt_yes_no(
-                        f"{symbol}: Current Cycle {current_cycle} - no better "
-                        f"candidate found in {cycles_without_better} cycle(s). "
-                        "Continue grid search",
-                        default=True,
-                    )
-                ):
-                    print(
-                        f"{symbol}: no better candidate accepted; "
-                        "moving to the next ticker."
-                    )
-                    return summarized_results, False
-                cycle_index += 1
-                print(
-                    f"{symbol}: no better suitable score since the last review; "
-                    "automatically continuing the grid."
-                )
-                continue
-            if _prompt_yes_no(
-                f"{symbol}: Current Cycle {current_cycle} - "
-                "are the current candidates suitable",
-                default=True,
-            ):
-                if _prompt_yes_no(
-                    f"{symbol}: Current Cycle {current_cycle} - move to the next ticker",
-                    default=True,
-                ):
-                    return summarized_results, False
-                print(f"{symbol}: current candidates kept; stopping before the next ticker.")
-                return summarized_results, True
-            last_declined_suitable_scores = current_best_scores
-            cycles_without_better = 0
-            cycle_index += 1
-            print(
-                f"{symbol}: suitable candidates declined; continuing the grid "
-                "until a better score is found."
-            )
-            continue
-
-        no_suitable_cycles = cycle_index + 1
-        should_prompt = no_suitable_cycles % prompt_cadence == 0
-        if should_prompt and not _prompt_yes_no(
-            f"{symbol}: Current Cycle {current_cycle} - no suitable candidate after "
-            f"{no_suitable_cycles} cycle(s). Continue grid search",
-            default=True,
-        ):
-            print(f"{symbol}: no suitable candidate accepted; moving to the next ticker.")
-            return summarized_results, False
-        cycle_index += 1
-        print(
-            f"{symbol}: no suitable candidate found; "
-            "automatically continuing the grid."
-        )
+            return [], progress_rows
+        try:
+            results = _run_symbol(symbol, symbol_tickers, grid, config, progress_rows)
+        except Exception as exc:
+            print(f"{symbol}: failed ({exc!r}); continuing with the next ticker")
+            progress_rows.append([symbol, "grid", "error", 0, 0, "", repr(exc)])
+            return [], progress_rows
+    # Drop heavy backtest payloads before crossing the process boundary.
+    for result in results:
+        for candidate in result.get("top", []) or []:
+            candidate.pop("res", None)
+    return results, progress_rows
 
 
 def _write_aggregate_results(results: List[Dict[str, Any]]) -> None:
@@ -670,37 +603,32 @@ def main() -> None:
     symbol_groups = _group_tickers_by_symbol(gated_tickers)
     grid = config.get("grid") or DEFAULT_CONFIG["grid"]
     print(f"Starting unified grid search for {len(symbol_groups)} ticker(s)")
-    for symbol, symbol_tickers in symbol_groups:
-        with _TickerLock(symbol) as lock_acquired:
-            if not lock_acquired:
-                note = (
-                    f"{symbol}: skipped because another optimizer process "
-                    "is already working on this ticker"
-                )
-                print(note)
-                for ticker in symbol_tickers:
-                    progress_rows.append([
-                        symbol,
-                        "lock",
-                        "skipped",
-                        0,
-                        0,
-                        "",
-                        f"{note} ({ticker.get('timeframe', '')})",
-                    ])
-                continue
-            symbol_results, stop_after_current = _run_symbol(
-                symbol,
-                symbol_tickers,
-                grid,
-                config,
-                progress_rows,
-            )
-            final_results.extend(symbol_results)
-            if stop_after_current:
-                break
+    workers = _read_positive_int(
+        (config.get("optimization", {}) or {}).get("workers", 4), 4
+    )
 
-    _write_aggregate_results(final_results)
+    def _record(outcome: Tuple[List[Dict[str, Any]], List[List[Any]]]) -> None:
+        symbol_results, symbol_progress = outcome
+        final_results.extend(symbol_results)
+        progress_rows.extend(symbol_progress)
+        if symbol_results:
+            _write_aggregate_results(symbol_results)
+        _write_progress_rows(progress_path, progress_rows)
+
+    workers = min(workers, len(symbol_groups))
+    if workers <= 1:
+        for symbol, symbol_tickers in symbol_groups:
+            _record(_process_symbol(symbol, symbol_tickers, grid, config))
+    else:
+        print(f"Running {workers} parallel worker(s)")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(_process_symbol, symbol, symbol_tickers, grid, config)
+                for symbol, symbol_tickers in symbol_groups
+            ]
+            for future in as_completed(futures):
+                _record(future.result())
+
     _write_progress_rows(progress_path, progress_rows)
     print("Optimization complete. Results in optimizer_results/")
     print(f"Elapsed: {time() - started_at:.1f}s")
