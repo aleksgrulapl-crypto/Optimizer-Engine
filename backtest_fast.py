@@ -1,4 +1,4 @@
-﻿# backtest_fast.py
+# backtest_fast.py
 """Numba-accelerated drop-in for backtest_engine.run_backtest.
 
 Same signature and result shape ({"trade_dicts": [...], "indicators": {...}});
