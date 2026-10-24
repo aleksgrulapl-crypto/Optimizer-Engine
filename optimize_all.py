@@ -338,6 +338,7 @@ def _run_grid_cycle(
     grid: Dict[str, Any],
     config: Dict[str, Any],
     time_budget: Any = None,
+    baseline_score: float = float("-inf"),
 ) -> Dict[str, Any]:
     optimization_config = config.get("optimization", {}) or {}
     strong_filters = {
@@ -346,13 +347,31 @@ def _run_grid_cycle(
     }
     if time_budget is None:
         time_budget = int(config.get("time_budget_seconds_per_ticker", 3600))
+    full_mode = str(optimization_config.get("search_mode", "randomized")).strip().lower() == "full"
+    gate: Dict[str, Any] = {}
+    if full_mode:
+        # Move on once a strictly better, suitable candidate appears or this
+        # run has covered max_positions grid positions; the next run resumes
+        # from the checkpoint.
+        gate = {
+            "max_positions": _read_positive_int(
+                optimization_config.get("max_positions_per_run", 150000), 150000
+            ),
+            "checkpoint_every": _read_positive_int(
+                optimization_config.get("checkpoint_every", 25000), 25000
+            ),
+            "stop_when": lambda c: (
+                float(c["score"]) > baseline_score
+                and is_strong_candidate(c["metrics"], strong_filters)
+            ),
+        }
     result = optimize_ticker(
         ticker,
         grid,
         [str((config.get("execution", {}) or {}).get("intrabar_path", "ohlc"))],
         top_k=int(config.get("top_k_per_ticker", 10)),
         time_budget=max(1, int(time_budget)),
-        search_mode="randomized",
+        search_mode=("full" if str(optimization_config.get("search_mode", "randomized")).strip().lower() == "full" else "randomized"),
         seed=derive_seed(
             int(config.get("random_seed", 0)),
             ticker.get("symbol"),
@@ -362,6 +381,7 @@ def _run_grid_cycle(
         robustness=(config.get("robustness", {}) or {}),
         phase="grid",
         filters=(optimization_config.get("filters", None) or None),
+        **gate,
     )
     return _mark_suitable(result, strong_filters)
 
@@ -394,6 +414,8 @@ def _run_timeframe(
 ) -> Dict[str, Any]:
     optimization_config = config.get("optimization", {}) or {}
     rounds = _read_positive_int(optimization_config.get("rounds_per_timeframe", 3), 3)
+    if str(optimization_config.get("search_mode", "randomized")).strip().lower() == "full":
+        rounds = 1  # one checkpointed window per cycle; the next cycle resumes from it
     strong_filters = {
         **STRONG_FILTERS,
         **(optimization_config.get("strong_filters", {}) or {}),
@@ -407,7 +429,7 @@ def _run_timeframe(
     result: Dict[str, Any] = {}
     for round_index in range(1, rounds + 1):
         print(f"{symbol} {timeframe}: round {round_index}/{rounds} ({round_budget:.0f}s)")
-        result = _run_grid_cycle(ticker, grid, config, round_budget)
+        result = _run_grid_cycle(ticker, grid, config, round_budget, baseline_score)
         _append_progress_row(progress_rows, result)
         if _found_better_candidate(result, baseline_score, strong_filters):
             print(f"{symbol} {timeframe}: better candidate found; moving on.")

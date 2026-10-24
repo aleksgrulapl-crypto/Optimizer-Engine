@@ -1,6 +1,7 @@
 """Optimization worker with candidate tracking, resume, and robustness filtering."""
 
 import time
+import os
 import csv
 import json
 import itertools
@@ -8,7 +9,7 @@ import hashlib
 import math
 import random
 from pathlib import Path
-from typing import Dict, Any, List, Iterator, Tuple
+from typing import Callable, Dict, Any, List, Iterator, Tuple
 
 from data_loader import load_candles_from_csv
 from backtest_engine import run_backtest
@@ -113,6 +114,11 @@ def _grid_search_entries(grid: Dict[str, Any],
         mode = "exhaustive" if total <= max_exhaustive else "sample"
 
     keys = list(grid_expanded.keys())
+    if mode == "full":
+        for position in range(max(0, start_position), total):
+            yield position, _decode_grid_index(position, keys, grid_expanded)
+        return
+
     if mode == "exhaustive":
         lists = [grid_expanded[k] for k in keys]
         for position, combo in enumerate(itertools.product(*lists)):
@@ -384,6 +390,37 @@ def _load_completed_state(label: str, phase: str) -> Tuple[set, List[Dict[str, A
     return keys, candidates, best_score, resume_position
 
 
+def _checkpoint_path(label: str, phase: str) -> Path:
+    return Path("checkpoints") / f"{label}_{phase}.json"
+
+
+def _load_checkpoint(label: str, phase: str) -> Dict[str, Any]:
+    try:
+        data = json.loads(_checkpoint_path(label, phase).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_checkpoint(label: str, phase: str, next_position: int, total: int,
+                     best: Dict[str, Any] = None, complete: bool = False) -> None:
+    path = _checkpoint_path(label, phase)
+    path.parent.mkdir(exist_ok=True)
+    data = {
+        "next_position": int(next_position),
+        "total": int(total),
+        "complete": bool(complete),
+        "best_score": best["score"] if best else None,
+        "best_params": best["params"] if best else None,
+        "best_metrics": ({k: v for k, v in best["metrics"].items() if k != "equity_series"}
+                         if best else None),
+        "timestamp": time.time(),
+    }
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _load_completed_keys(label: str, phase: str) -> set:
     keys, _, _, _ = _load_completed_state(label, phase)
     return keys
@@ -513,7 +550,13 @@ def optimize_ticker(cfg: Dict[str, Any],
                     execution: Dict[str, Any] = None,
                     robustness: Dict[str, Any] = None,
                     phase: str = "constrained",
-                    filters: Dict[str, Any] = None) -> Dict[str, Any]:
+                    filters: Dict[str, Any] = None,
+                    max_positions: int = None,
+                    checkpoint_every: int = 25000,
+                    stop_when: Callable[[Dict[str, Any]], bool] = None,
+                    progress_every: int = 1000) -> Dict[str, Any]:
+    """In "full" mode, max_positions is the window of grid positions evaluated per
+    run (counted from the checkpoint), and stop_when(candidate) ends the run early."""
     symbol = cfg.get("symbol")
     tsv = cfg.get("tsv")
     timeframe = cfg.get("timeframe")
@@ -540,16 +583,55 @@ def optimize_ticker(cfg: Dict[str, Any],
 
     scan_counter = 0
 
+    # "full" mode walks the whole grid in order, ignores the time budget and
+    # checkpoints the next position plus the best candidate for resuming.
+    full_mode = search_mode == "full"
+    start_position = 0
+    if full_mode:
+        time_budget = float("inf")
+        start_position = int(_load_checkpoint(label, phase).get("next_position", 0) or 0)
+        scan_counter = start_position * len(intrabar_paths)
+    elif search_mode == "randomized":
+        start_position = max(
+            resume_position, int(_load_checkpoint(label, phase).get("next_position", 0) or 0)
+        )
+    checkpointed = search_mode in ("full", "randomized")
+    last_position = start_position
+    checkpoint_every = max(1, int(checkpoint_every))
+    progress_every = max(1, int(progress_every))
+    stop_reason = "complete" if full_mode else "time_or_exhausted"
+    stop_requested = False
+
     for search_position, params in _grid_search_entries(
         grid,
         search_mode=search_mode,
         n_samples=n_samples,
         max_exhaustive=max_exhaustive,
         seed=seed,
-        start_position=resume_position if search_mode == "randomized" else 0,
+        start_position=start_position,
     ):
         if time.time() - start_time > time_budget:
             break
+        if full_mode and max_positions is not None and search_position >= start_position + max_positions:
+            stop_reason = "position_cap"
+            break
+        last_position = search_position + 1
+        if checkpointed and search_position % checkpoint_every == 0:
+            _save_checkpoint(label, phase, search_position, total_combos // len(intrabar_paths),
+                             best_candidates[0] if best_candidates else None)
+
+        if (search_position - start_position) % progress_every == 0:
+            grid_total = total_combos // len(intrabar_paths)
+            done = search_position - start_position
+            rate = done / max(time.time() - start_time, 1e-9)
+            window = f" | window {done:,}/{max_positions:,}" if full_mode and max_positions else ""
+            best = f"{best_score_so_far:.2f}" if best_score_so_far != float("-inf") else "n/a"
+            print(
+                f"[{label}][{phase}] position {search_position:,}/{grid_total:,} "
+                f"({100.0 * search_position / max(grid_total, 1):.4f}%){window} "
+                f"| evaluated={evaluated:,} | best_score={best} | {rate:,.1f} pos/s",
+                flush=True,
+            )
 
         for path in intrabar_paths:
             scan_counter += 1
@@ -566,8 +648,6 @@ def optimize_ticker(cfg: Dict[str, Any],
 
             key = _param_key(run_params)
 
-            print(f"[{label}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated} | best_score={best_score_so_far:.2f}" if best_score_so_far != float('-inf') else f"[{label}][{phase}] Scanning {scan_counter}/{total_combos} | evaluated={evaluated}", flush=True)
-
             if key in completed_keys:
                 continue
 
@@ -582,17 +662,8 @@ def optimize_ticker(cfg: Dict[str, Any],
             tc = int(metrics.get("trade_count", 0))
 
             if not passes_filters(metrics, filters):
-                rec = {
-                    "timestamp": time.time(),
-                    "_search_position": search_position,
-                    "_param_key": key,
-                    "params": run_params,
-                    "metrics": metrics,
-                    "score": None,
-                    "status": "rejected"
-                }
-                _append_completed_run(label, phase, rec)
-                completed_keys.add(key)
+                # Rejected results are not persisted; the position checkpoint
+                # is what lets a resumed run skip them.
                 evaluated += 1
                 continue
 
@@ -619,7 +690,7 @@ def optimize_ticker(cfg: Dict[str, Any],
                 "_search_position": search_position,
                 "_param_key": key,
                 "params": run_params,
-                "metrics": metrics,
+                "metrics": {k: v for k, v in metrics.items() if k != "equity_series"},
                 "score": score,
                 "status": "accepted"
             }
@@ -629,10 +700,27 @@ def optimize_ticker(cfg: Dict[str, Any],
 
             best_candidates = _sort_candidates(best_candidates, top_k)
 
+            if stop_when is not None and stop_when(candidate):
+                stop_requested = True
+                stop_reason = "improved"
+                last_position = search_position
+                break
+
             if time.time() - start_time > time_budget:
                 break
 
+        if stop_requested:
+            break
+
     _sort_candidates(best_candidates, top_k)
+
+    print(f"[{label}][{phase}] stopped ({stop_reason}) at position {last_position:,}/"
+          f"{total_combos // len(intrabar_paths):,} | evaluated={evaluated:,}", flush=True)
+
+    if checkpointed:
+        _save_checkpoint(label, phase, last_position, total_combos // len(intrabar_paths),
+                         best_candidates[0] if best_candidates else None,
+                         complete=last_position >= total_combos // len(intrabar_paths))
 
     robust_note = "robustness not run"
     if best_candidates:
@@ -655,4 +743,5 @@ def optimize_ticker(cfg: Dict[str, Any],
         "evaluated": evaluated,
         "elapsed_seconds": elapsed,
         "note": robust_note,
+        "stop_reason": stop_reason,
     }

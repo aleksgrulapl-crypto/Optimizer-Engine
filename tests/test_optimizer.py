@@ -292,6 +292,66 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(run_backtest.call_count, 1)
         self.assertEqual(result["evaluated"], 1)
 
+    def test_full_mode_checkpoints_and_resumes(self):
+        ticker = {"symbol": "TEST", "timeframe": "15m", "tsv": "ignored.tsv"}
+        grid = {"stMultiplier": [1.0, 2.0, 3.0, 4.0]}
+        metrics = {"net_profit": -1.0, "trade_count": 0, "win_rate": 0.0,
+                   "profit_factor": 0.0, "max_drawdown": 0.0, "max_drawdown_pct": 0.0}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            old_cwd = Path.cwd()
+            os.chdir(root)
+            try:
+                with mock.patch("optimizer_worker.load_candles_from_csv", return_value=[]), \
+                     mock.patch("optimizer_worker.run_backtest", return_value={"trade_dicts": []}) as run_backtest, \
+                     mock.patch("optimizer_worker.compute_metrics_from_run", return_value=metrics):
+                    ow._save_checkpoint("TEST_15m", "grid", 2, 4)
+                    result = ow.optimize_ticker(
+                        ticker, grid, ["ohlc"], search_mode="full", phase="grid",
+                        robustness={"enabled": False},
+                    )
+                checkpoint = ow._load_checkpoint("TEST_15m", "grid")
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(run_backtest.call_count, 2)
+        self.assertEqual(result["evaluated"], 2)
+        self.assertEqual(checkpoint["next_position"], 4)
+        self.assertTrue(checkpoint["complete"])
+
+    def test_full_mode_stops_at_position_cap_and_on_improvement(self):
+        ticker = {"symbol": "TEST", "timeframe": "15m", "tsv": "ignored.tsv"}
+        grid = {"stMultiplier": [1.0, 2.0, 3.0, 4.0, 5.0]}
+        good = {"net_profit": 500.0, "trade_count": 200, "win_rate": 0.6,
+                "profit_factor": 2.0, "max_drawdown": 1.0, "max_drawdown_pct": 0.05}
+
+        def run(start_checkpoint=0, **kwargs):
+            with tempfile.TemporaryDirectory() as temp_dir:
+                old_cwd = Path.cwd()
+                os.chdir(temp_dir)
+                try:
+                    if start_checkpoint:
+                        ow._save_checkpoint("TEST_15m", "grid", start_checkpoint, 5)
+                    with mock.patch("optimizer_worker.load_candles_from_csv", return_value=[]), \
+                         mock.patch("optimizer_worker.run_backtest", return_value={"trade_dicts": []}) as rb, \
+                         mock.patch("optimizer_worker.compute_metrics_from_run", return_value=good):
+                        result = ow.optimize_ticker(
+                            ticker, grid, ["ohlc"], search_mode="full", phase="grid",
+                            robustness={"enabled": False}, **kwargs)
+                    return result, rb.call_count, ow._load_checkpoint("TEST_15m", "grid")
+                finally:
+                    os.chdir(old_cwd)
+
+        result, calls, checkpoint = run(max_positions=3)
+        self.assertEqual((calls, result["stop_reason"], checkpoint["next_position"]), (3, "position_cap", 3))
+
+        result, calls, checkpoint = run(max_positions=2, start_checkpoint=2)
+        self.assertEqual((calls, result["stop_reason"], checkpoint["next_position"]), (2, "position_cap", 4))
+
+        result, calls, checkpoint = run(stop_when=lambda c: True)
+        self.assertEqual((calls, result["stop_reason"], checkpoint["next_position"]), (1, "improved", 0))
+
 
 class WorkerIntegrationTests(unittest.TestCase):
     def test_actual_backtest_runs_through_unified_worker(self):
