@@ -12,7 +12,10 @@ from pathlib import Path
 from typing import Callable, Dict, Any, List, Iterator, Tuple
 
 from data_loader import load_candles_from_csv
-from backtest_engine import run_backtest
+try:
+    from backtest_fast import run_backtest_lean as run_backtest  # numba engine
+except ImportError:  # numba not installed: fall back to the pure-Python engine
+    from backtest_engine import run_backtest
 
 # Default acceptance filters for a candidate to be considered suitable:
 # win rate >= 45%, profit factor >= 1.4, strictly positive net profit, low DD.
