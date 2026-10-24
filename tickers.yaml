@@ -8,48 +8,6 @@
 # keep it in the optimization queue. Omitted Status values default to Incomplete.
 
 tickers:
-  - symbol: NVDA
-    timeframe: 15m
-    tsv: data/NVDA_15m.tsv
-    tv_export: null
-    parity_ok: true
-    Status: Incomplete
-
-  - symbol: NVDA
-    timeframe: 30m
-    tsv: data/NVDA_30m.tsv
-    tv_export: null
-    parity_ok: true
-    Status: Incomplete
-
-  - symbol: NVDA
-    timeframe: 60m
-    tsv: data/NVDA_60m.tsv
-    tv_export: null
-    parity_ok: true
-    Status: Incomplete
-
-  - symbol: MU
-    timeframe: 15m
-    tsv: data/MU_15m.tsv
-    tv_export: null
-    parity_ok: true
-    Status: Incomplete
-
-  - symbol: MU
-    timeframe: 30m
-    tsv: data/MU_30m.tsv
-    tv_export: null
-    parity_ok: true
-    Status: Incomplete
-
-  - symbol: MU
-    timeframe: 60m
-    tsv: data/MU_60m.tsv
-    tv_export: null
-    parity_ok: true
-    Status: Incomplete
-
   - symbol: AAPL
     timeframe: 15m
     tsv: data/AAPL_15m.tsv
@@ -67,6 +25,27 @@ tickers:
   - symbol: AAPL
     timeframe: 60m
     tsv: data/AAPL_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: ADBE
+    timeframe: 15m
+    tsv: data/ADBE_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: ADBE
+    timeframe: 30m
+    tsv: data/ADBE_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: ADBE
+    timeframe: 60m
+    tsv: data/ADBE_60m.tsv
     tv_export: null
     parity_ok: true
     Status: Incomplete
@@ -134,6 +113,27 @@ tickers:
     parity_ok: true
     Status: Incomplete
 
+  - symbol: AR
+    timeframe: 15m
+    tsv: data/AR_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: AR
+    timeframe: 30m
+    tsv: data/AR_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: AR
+    timeframe: 60m
+    tsv: data/AR_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
   - symbol: AVGO
     timeframe: 15m
     tsv: data/AVGO_15m.tsv
@@ -176,6 +176,69 @@ tickers:
     parity_ok: true
     Status: Incomplete
 
+  - symbol: CAN
+    timeframe: 15m
+    tsv: data/CAN_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CAN
+    timeframe: 30m
+    tsv: data/CAN_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CAN
+    timeframe: 60m
+    tsv: data/CAN_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CI
+    timeframe: 15m
+    tsv: data/CI_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CI
+    timeframe: 30m
+    tsv: data/CI_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CI
+    timeframe: 60m
+    tsv: data/CI_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CMCSA
+    timeframe: 15m
+    tsv: data/CMCSA_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CMCSA
+    timeframe: 30m
+    tsv: data/CMCSA_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CMCSA
+    timeframe: 60m
+    tsv: data/CMCSA_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
   - symbol: CSCO
     timeframe: 15m
     tsv: data/CSCO_15m.tsv
@@ -193,6 +256,69 @@ tickers:
   - symbol: CSCO
     timeframe: 60m
     tsv: data/CSCO_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CTSH
+    timeframe: 15m
+    tsv: data/CTSH_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CTSH
+    timeframe: 30m
+    tsv: data/CTSH_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: CTSH
+    timeframe: 60m
+    tsv: data/CTSH_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: DIS
+    timeframe: 15m
+    tsv: data/DIS_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: DIS
+    timeframe: 30m
+    tsv: data/DIS_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: DIS
+    timeframe: 60m
+    tsv: data/DIS_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: GEHC
+    timeframe: 15m
+    tsv: data/GEHC_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: GEHC
+    timeframe: 30m
+    tsv: data/GEHC_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: GEHC
+    timeframe: 60m
+    tsv: data/GEHC_60m.tsv
     tv_export: null
     parity_ok: true
     Status: Incomplete
@@ -235,6 +361,27 @@ tickers:
   - symbol: INTC
     timeframe: 60m
     tsv: data/INTC_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: INTU
+    timeframe: 15m
+    tsv: data/INTU_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: INTU
+    timeframe: 30m
+    tsv: data/INTU_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: INTU
+    timeframe: 60m
+    tsv: data/INTU_60m.tsv
     tv_export: null
     parity_ok: true
     Status: Incomplete
@@ -323,6 +470,27 @@ tickers:
     parity_ok: true
     Status: Incomplete
 
+  - symbol: LULU
+    timeframe: 15m
+    tsv: data/LULU_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: LULU
+    timeframe: 30m
+    tsv: data/LULU_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: LULU
+    timeframe: 60m
+    tsv: data/LULU_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
   - symbol: META
     timeframe: 15m
     tsv: data/META_15m.tsv
@@ -386,6 +554,27 @@ tickers:
     parity_ok: true
     Status: Incomplete
 
+  - symbol: MU
+    timeframe: 15m
+    tsv: data/MU_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: MU
+    timeframe: 30m
+    tsv: data/MU_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: MU
+    timeframe: 60m
+    tsv: data/MU_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
   - symbol: NBIS
     timeframe: 15m
     tsv: data/NBIS_15m.tsv
@@ -424,6 +613,48 @@ tickers:
   - symbol: NFLX
     timeframe: 60m
     tsv: data/NFLX_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: NKE
+    timeframe: 15m
+    tsv: data/NKE_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: NKE
+    timeframe: 30m
+    tsv: data/NKE_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: NKE
+    timeframe: 60m
+    tsv: data/NKE_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: NVDA
+    timeframe: 15m
+    tsv: data/NVDA_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: NVDA
+    timeframe: 30m
+    tsv: data/NVDA_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: NVDA
+    timeframe: 60m
+    tsv: data/NVDA_60m.tsv
     tv_export: null
     parity_ok: true
     Status: Incomplete
@@ -491,6 +722,27 @@ tickers:
     parity_ok: true
     Status: Incomplete
 
+  - symbol: PYPL
+    timeframe: 15m
+    tsv: data/PYPL_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: PYPL
+    timeframe: 30m
+    tsv: data/PYPL_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: PYPL
+    timeframe: 60m
+    tsv: data/PYPL_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
   - symbol: QBTS
     timeframe: 15m
     tsv: data/QBTS_15m.tsv
@@ -512,6 +764,90 @@ tickers:
     parity_ok: true
     Status: Incomplete
 
+  - symbol: REGN
+    timeframe: 15m
+    tsv: data/REGN_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: REGN
+    timeframe: 30m
+    tsv: data/REGN_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: REGN
+    timeframe: 60m
+    tsv: data/REGN_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: RKLB
+    timeframe: 15m
+    tsv: data/RKLB_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: RKLB
+    timeframe: 30m
+    tsv: data/RKLB_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: RKLB
+    timeframe: 60m
+    tsv: data/RKLB_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: ROP
+    timeframe: 15m
+    tsv: data/ROP_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: ROP
+    timeframe: 30m
+    tsv: data/ROP_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: ROP
+    timeframe: 60m
+    tsv: data/ROP_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: SCHW
+    timeframe: 15m
+    tsv: data/SCHW_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: SCHW
+    timeframe: 30m
+    tsv: data/SCHW_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: SCHW
+    timeframe: 60m
+    tsv: data/SCHW_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
   - symbol: SPCX
     timeframe: 15m
     tsv: data/SPCX_15m.tsv
@@ -529,6 +865,27 @@ tickers:
   - symbol: SPCX
     timeframe: 60m
     tsv: data/SPCX_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: SPGI
+    timeframe: 15m
+    tsv: data/SPGI_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: SPGI
+    timeframe: 30m
+    tsv: data/SPGI_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: SPGI
+    timeframe: 60m
+    tsv: data/SPGI_60m.tsv
     tv_export: null
     parity_ok: true
     Status: Incomplete
@@ -638,6 +995,27 @@ tickers:
     parity_ok: true
     Status: Incomplete
 
+  - symbol: ZTS
+    timeframe: 15m
+    tsv: data/ZTS_15m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: ZTS
+    timeframe: 30m
+    tsv: data/ZTS_30m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
+  - symbol: ZTS
+    timeframe: 60m
+    tsv: data/ZTS_60m.tsv
+    tv_export: null
+    parity_ok: true
+    Status: Incomplete
+
 execution:
   intrabar_path: ohlc
   slippage: 0.0
@@ -685,6 +1063,7 @@ time_budget_seconds_per_ticker: 3600
 # A candidate is suitable when it passes all filters. Candidates are scored
 # from 0 to 100, with lower drawdown preferred when scores tie.
 optimization:
+  search_mode: full                 # full = whole grid in order, checkpointed; randomized = time-boxed random order
   filters:
     min_win_rate: 0.45        # at least 45% win rate
     min_profit_factor: 1.4    # profit factor of at least 1.4

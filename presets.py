@@ -34,6 +34,8 @@ PRESETS = {
     "PLUG": ((3.0, 10, 1.4, 2.4, 200), (3.0, 10, 1.4, 2.4, 200)),
 }
 
+DEFAULT_PRESET = (3.0, 10, 1.4, 2.4, 200)
+
 
 def normalize_timeframe(timeframe: str = "15M") -> str:
     normalized = str(timeframe).strip().upper()
@@ -55,10 +57,11 @@ def get_presets(ticker: str, timeframe: str = "15M") -> Dict[str, float]:
     ticker = ticker.strip().upper()
     timeframe = normalize_timeframe(timeframe)
 
+    # Unlisted tickers use the generic seed until dedicated presets exist.
     if ticker not in PRESETS:
-        raise ValueError(f"Unsupported ticker: {ticker}")
-
-    # Until dedicated 60-minute presets are available, use the closest existing seed.
-    values = PRESETS[ticker][0 if timeframe == "15M" else 1]
+        values = DEFAULT_PRESET
+    else:
+        # Until dedicated 60-minute presets are available, use the closest existing seed.
+        values = PRESETS[ticker][0 if timeframe == "15M" else 1]
     keys = ("stMultiplier", "stPeriod", "atrSLmult", "atrTPmult", "emaLen")
     return dict(zip(keys, values))

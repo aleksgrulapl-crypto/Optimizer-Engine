@@ -249,6 +249,41 @@ def _apply_slippage_on_entry(side: str, entry_price: float, slippage: float) -> 
     else:
         return entry_price - slippage
 
+_INDICATOR_CACHES: List[Tuple[List[Dict[str, Any]], int, Dict[Any, Any]]] = []
+_MAX_CACHED_CANDLE_SETS = 8
+
+
+def _indicator_cache(candles: List[Dict[str, Any]]) -> Dict[Any, Any]:
+    """Per-candle-list memo store (holds a reference so identity stays valid)."""
+    for i, (ref, length, store) in enumerate(_INDICATOR_CACHES):
+        if ref is candles and length == len(candles):
+            if i:
+                _INDICATOR_CACHES.insert(0, _INDICATOR_CACHES.pop(i))
+            return store
+    store: Dict[Any, Any] = {}
+    _INDICATOR_CACHES.insert(0, (candles, len(candles), store))
+    del _INDICATOR_CACHES[_MAX_CACHED_CANDLE_SETS:]
+    return store
+
+
+def _cached(store: Dict[Any, Any], key: Any, factory):
+    if key not in store:
+        store[key] = factory()
+    return store[key]
+
+
+def _ema_flags(ema: List[Optional[float]]) -> Tuple[List[bool], List[bool]]:
+    n = len(ema)
+    up = [False] * n
+    down = [False] * n
+    for i in range(1, n):
+        if ema[i] is None or ema[i-1] is None:
+            continue
+        up[i] = ema[i] > ema[i-1]
+        down[i] = ema[i] < ema[i-1]
+    return up, down
+
+
 def run_backtest(candles: List[Dict[str, Any]], params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Main backtest entry point.
@@ -288,21 +323,21 @@ def run_backtest(candles: List[Dict[str, Any]], params: Dict[str, Any]) -> Dict[
         for k in ("open", "high", "low", "close"):
             c[k] = float(c[k])
 
-    # Indicators
-    tr = compute_tr(candles)
-    atr = compute_sma(tr, stPeriod)
-    up, dn, trend = compute_supertrend(candles, stPeriod, stMultiplier)
-    emaTrend = compute_ema_from_close(candles, emaLen)
+    # Indicators (memoized per candle list: a grid reuses the same few
+    # periods/multipliers across thousands of combinations)
+    cache = _indicator_cache(candles)
+    if "tr" not in cache:
+        cache["tr"] = compute_tr(candles)
+    tr = cache["tr"]
+    atr = _cached(cache, ("atr", stPeriod), lambda: compute_sma(tr, stPeriod))
+    up, dn, trend = _cached(
+        cache, ("st", stPeriod, stMultiplier),
+        lambda: compute_supertrend(candles, stPeriod, stMultiplier),
+    )
+    emaTrend = _cached(cache, ("ema", emaLen), lambda: compute_ema_from_close(candles, emaLen))
 
-    emaUp = [False] * n
-    emaDown = [False] * n
-    for i in range(1, n):
-        if emaTrend[i] is None or emaTrend[i-1] is None:
-            emaUp[i] = False
-            emaDown[i] = False
-        else:
-            emaUp[i] = emaTrend[i] > emaTrend[i-1]
-            emaDown[i] = emaTrend[i] < emaTrend[i-1]
+    ema_flags = _cached(cache, ("emaflags", emaLen), lambda: _ema_flags(emaTrend))
+    emaUp, emaDown = ema_flags
 
     trade_dicts: List[Dict[str, Any]] = []
     pos_list: List[Position] = []  # allow multiple positions for pyramiding
