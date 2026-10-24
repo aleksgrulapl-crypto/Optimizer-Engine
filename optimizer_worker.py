@@ -25,7 +25,7 @@ DEFAULT_FILTERS: Dict[str, Any] = {
 }
 
 # Strong-candidate bar: a ticker/timeframe run is only considered complete
-# once at least one candidate clears these thresholds — strictly positive net
+# once at least one candidate clears these thresholds - strictly positive net
 # profit, profit factor >= 1.4, win rate >= 45%, at least 100 trades, and low max
 # drawdown. The orchestrator uses this bar to summarize whether a ticker is
 # ready to move on.
