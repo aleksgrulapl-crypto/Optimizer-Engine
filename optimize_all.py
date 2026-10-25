@@ -56,8 +56,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "filters": dict(DEFAULT_FILTERS),
         "strong_filters": dict(STRONG_FILTERS),
         "workers": 4,
-        "symbol_time_budget_seconds": 10800,
-        "rounds_per_timeframe": 3,
+        "timeframe_time_budget_seconds": 3600,
+        "rounds_per_timeframe": 1,
     },
     "robustness": {
         "enabled": True,
@@ -348,23 +348,23 @@ def _run_grid_cycle(
     if time_budget is None:
         time_budget = int(config.get("time_budget_seconds_per_ticker", 3600))
     full_mode = str(optimization_config.get("search_mode", "randomized")).strip().lower() == "full"
-    gate: Dict[str, Any] = {}
+    # Move on immediately once a strictly better, suitable candidate appears
+    # (any mode); otherwise the run ends when its time budget is spent.
+    gate: Dict[str, Any] = {
+        "stop_when": lambda c: (
+            float(c["score"]) > baseline_score
+            and is_strong_candidate(c["metrics"], strong_filters)
+        ),
+        "checkpoint_every": _read_positive_int(
+            optimization_config.get("checkpoint_every", 25000), 25000
+        ),
+    }
     if full_mode:
-        # Move on once a strictly better, suitable candidate appears or this
-        # run has covered max_positions grid positions; the next run resumes
-        # from the checkpoint.
-        gate = {
-            "max_positions": _read_positive_int(
-                optimization_config.get("max_positions_per_run", 150000), 150000
-            ),
-            "checkpoint_every": _read_positive_int(
-                optimization_config.get("checkpoint_every", 25000), 25000
-            ),
-            "stop_when": lambda c: (
-                float(c["score"]) > baseline_score
-                and is_strong_candidate(c["metrics"], strong_filters)
-            ),
-        }
+        # Full mode also caps the window of grid positions per run; the next
+        # run resumes from the checkpoint.
+        gate["max_positions"] = _read_positive_int(
+            optimization_config.get("max_positions_per_run", 150000), 150000
+        )
     result = optimize_ticker(
         ticker,
         grid,
@@ -413,7 +413,7 @@ def _run_timeframe(
     progress_rows: List[List[Any]],
 ) -> Dict[str, Any]:
     optimization_config = config.get("optimization", {}) or {}
-    rounds = _read_positive_int(optimization_config.get("rounds_per_timeframe", 3), 3)
+    rounds = _read_positive_int(optimization_config.get("rounds_per_timeframe", 1), 1)
     if str(optimization_config.get("search_mode", "randomized")).strip().lower() == "full":
         rounds = 1  # one checkpointed window per cycle; the next cycle resumes from it
     strong_filters = {
@@ -451,8 +451,8 @@ def _run_symbol(
     progress_rows: List[List[Any]],
 ) -> List[Dict[str, Any]]:
     optimization_config = config.get("optimization", {}) or {}
-    symbol_budget = float(optimization_config.get("symbol_time_budget_seconds", 10800))
-    timeframe_budget = symbol_budget / max(1, len(symbol_tickers))
+    # Flat budget per ticker/timeframe (up to 3 timeframes -> 3h per symbol).
+    timeframe_budget = float(optimization_config.get("timeframe_time_budget_seconds", 3600))
 
     print(f"\nStarting {symbol} with {len(symbol_tickers)} timeframe(s)")
     results: List[Dict[str, Any]] = []

@@ -413,8 +413,9 @@ class GridCycleTests(unittest.TestCase):
         self.assertEqual(kwargs["phase"], "grid")
         self.assertFalse(result["strong_candidate_found"])
 
-    def test_no_better_candidate_runs_three_rounds_then_moves_on(self):
+    def test_no_better_candidate_runs_all_rounds_then_moves_on(self):
         config = oa.merge_with_defaults({})
+        config["optimization"]["rounds_per_timeframe"] = 3
         result = {
             "symbol": "NVDA", "timeframe": "15m", "phase": "grid",
             "top": [], "evaluated": 1, "elapsed_seconds": 0.0, "note": "",
@@ -455,11 +456,26 @@ class GridCycleTests(unittest.TestCase):
         self.assertEqual(run_cycle.call_count, 1)
         self.assertTrue(out["improved"])
 
-    def test_symbol_budget_is_split_across_incomplete_timeframes(self):
+    def test_each_timeframe_gets_flat_hour_budget(self):
         config = oa.merge_with_defaults({})
         with mock.patch("optimize_all._run_timeframe", return_value={"top": []}) as run_tf:
             oa._run_symbol("NVDA", [{"timeframe": "15m"}], config["grid"], config, [])
-        self.assertEqual(run_tf.call_args.args[3], 10800)
+        self.assertEqual(run_tf.call_args.args[3], 3600)
+
+    def test_randomized_cycle_stops_on_better_candidate(self):
+        config = oa.merge_with_defaults({})
+        mocked = {"symbol": "A", "timeframe": "15m", "phase": "grid", "top": [],
+                  "evaluated": 0, "elapsed_seconds": 0.0, "note": ""}
+        with mock.patch("optimize_all.optimize_ticker", return_value=mocked) as optimize:
+            oa._run_grid_cycle({"symbol": "A", "timeframe": "15m"}, config["grid"], config,
+                               baseline_score=50.0)
+        stop_when = optimize.call_args.kwargs["stop_when"]
+        strong = {"net_profit": 10.0, "profit_factor": 2.0, "win_rate": 0.6,
+                  "trade_count": 200, "max_drawdown_pct": 0.1}
+        self.assertTrue(stop_when({"score": 60.0, "metrics": strong}))
+        self.assertFalse(stop_when({"score": 40.0, "metrics": strong}))
+        self.assertNotIn("max_positions", optimize.call_args.kwargs)
+
     def test_completed_status_skips_ticker(self):
         config = oa.merge_with_defaults({
             "tickers": [{

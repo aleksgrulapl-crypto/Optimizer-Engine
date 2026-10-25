@@ -1080,8 +1080,8 @@ optimization:
     min_trades: 100
     max_drawdown_pct: 0.25        # low max drawdown (<= 25%)
   workers: 4                        # tickers optimized in parallel
-  symbol_time_budget_seconds: 10800 # split across a ticker's incomplete timeframes
-  rounds_per_timeframe: 3           # rounds (time slices) before moving on
+  timeframe_time_budget_seconds: 3600 # max time per ticker/timeframe (3 timeframes = up to 3h per ticker)
+  rounds_per_timeframe: 1           # a new best suitable candidate moves on immediately
 
 # optional post-optimization stability check on top candidates
 robustness:
