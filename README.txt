@@ -30,7 +30,7 @@ Workflow (required order):
 Each ticker/timeframe gets a flat 1 hour budget
 (optimization.timeframe_time_budget_seconds), so a ticker with 3 timeframes
 takes up to 3h regardless of other timeframes' Status.
-optimize_all.py runs 4 tickers in parallel (optimization.workers) and never
+optimize_all.py runs 2 tickers in parallel (optimization.workers) and never
 prompts, so it can run unattended 24/7. A timeframe moves on immediately,
 mid-run, as soon as it finds a suitable candidate strictly better than the best
 that existed when the run started (the initial/previous best never counts), or

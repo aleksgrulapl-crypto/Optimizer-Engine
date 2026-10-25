@@ -55,7 +55,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "optimization": {
         "filters": dict(DEFAULT_FILTERS),
         "strong_filters": dict(STRONG_FILTERS),
-        "workers": 4,
+        "workers": 2,
         "timeframe_time_budget_seconds": 3600,
         "rounds_per_timeframe": 1,
     },
@@ -358,6 +358,9 @@ def _run_grid_cycle(
         "checkpoint_every": _read_positive_int(
             optimization_config.get("checkpoint_every", 25000), 25000
         ),
+        "progress_every": _read_positive_int(
+            optimization_config.get("progress_every", 15000), 15000
+        ),
     }
     if full_mode:
         # Full mode also caps the window of grid positions per run; the next
@@ -626,7 +629,7 @@ def main() -> None:
     grid = config.get("grid") or DEFAULT_CONFIG["grid"]
     print(f"Starting unified grid search for {len(symbol_groups)} ticker(s)")
     workers = _read_positive_int(
-        (config.get("optimization", {}) or {}).get("workers", 4), 4
+        (config.get("optimization", {}) or {}).get("workers", 2), 2
     )
 
     def _record(outcome: Tuple[List[Dict[str, Any]], List[List[Any]]]) -> None:

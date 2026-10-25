@@ -323,6 +323,11 @@ def _simulate(open_, high, low, close, atr, trend, ema,
             tr_pnl, tr_gross, tr_comm, tr_reason)
 
 
+# Randomized sampling touches every (period, multiplier, emaLen) combination,
+# so unbounded caches grow to gigabytes; keep them small.
+_MAX_CACHED_SERIES = 48
+
+
 class _CandleArrays:
     """Numpy view of a candle list plus memoized indicators, reused across a grid."""
 
@@ -345,11 +350,15 @@ class _CandleArrays:
     def supertrend(self, period: int, mult: float):
         key = (period, mult)
         if key not in self._st:
+            if len(self._st) >= _MAX_CACHED_SERIES:
+                self._st.clear()
             self._st[key] = _supertrend(self.close, self.atr(period), mult)
         return self._st[key]
 
     def ema(self, length: int) -> np.ndarray:
         if length not in self._ema:
+            if len(self._ema) >= _MAX_CACHED_SERIES:
+                self._ema.clear()
             self._ema[length] = _ema(self.close, length)
         return self._ema[length]
 

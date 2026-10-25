@@ -54,7 +54,7 @@ class UnifiedGridConfigTests(unittest.TestCase):
         config = oa.merge_with_defaults({})
         self.assertEqual(config["time_budget_seconds_per_ticker"], 3600)
         self.assertEqual(config["top_k_per_ticker"], 10)
-        self.assertEqual(config["optimization"]["workers"], 4)
+        self.assertEqual(config["optimization"]["workers"], 2)
         self.assertEqual(config["robustness"]["evaluate_top_n"], 10)
         self.assertNotIn("staged_search", config)
         self.assertNotIn("grid_constrained", config)
@@ -81,7 +81,7 @@ class UnifiedGridConfigTests(unittest.TestCase):
             os.chdir(old_cwd)
         self.assertEqual(config["grid"], oa.DEFAULT_CONFIG["grid"])
         self.assertEqual(config["top_k_per_ticker"], 10)
-        self.assertEqual(config["optimization"]["workers"], 4)
+        self.assertEqual(config["optimization"]["workers"], 2)
 
     def test_repo_yaml_configures_all_three_timeframes_per_symbol(self):
         old_cwd = Path.cwd()

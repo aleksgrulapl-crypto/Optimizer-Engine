@@ -1079,7 +1079,8 @@ optimization:
     min_net_profit: 0.0           # strictly positive net profit
     min_trades: 100
     max_drawdown_pct: 0.25        # low max drawdown (<= 25%)
-  workers: 4                        # tickers optimized in parallel
+  workers: 2                        # tickers optimized in parallel (raise to 3 if RAM allows)
+  progress_every: 15000             # print a progress line every N grid positions
   timeframe_time_budget_seconds: 3600 # max time per ticker/timeframe (3 timeframes = up to 3h per ticker)
   rounds_per_timeframe: 1           # a new best suitable candidate moves on immediately
 
