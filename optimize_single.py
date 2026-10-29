@@ -15,7 +15,7 @@ from optimize_all import (
     _sanity_check_ticker,
 )
 from optimize_all import _write_progress_rows as write_progress_rows
-from optimizer_worker import optimize_ticker
+from optimizer_worker import derive_seed, optimize_ticker
 from presets import get_presets, normalize_timeframe
 
 REFINEMENT_FILTERS = {
@@ -60,12 +60,12 @@ def _build_refinement_grid(base: Dict[str, Any]) -> Dict[str, Any]:
     max_candle = _safe_float(base.get("maxEntryCandleATR"), 1.5)
 
     return {
-        "stMultiplier": _frange(max(0.2, st_mult - 0.4), st_mult + 0.4, 0.1),
+        "stMultiplier": _frange(max(0.2, st_mult - 1.0), st_mult + 1.0, 0.1),
         "stPeriod": list(range(max(2, st_period - 1), st_period + 2)),
-        "atrSLmult": _frange(max(0.2, atr_sl - 0.2), atr_sl + 0.2, 0.1),
-        "atrTPmult": _frange(max(0.5, atr_tp - 0.5), atr_tp + 0.5, 0.1),
+        "atrSLmult": _frange(max(0.2, atr_sl - 0.5), atr_sl + 0.5, 0.1),
+        "atrTPmult": _frange(max(0.2, atr_tp - 0.5), atr_tp + 0.5, 0.1),
         "emaLen": list(range(max(5, ema_len - 10), ema_len + 11)),
-        "maxEntryCandleATR": _frange(max(0.5, max_candle - 0.3), max_candle + 0.3, 0.1),
+        "maxEntryCandleATR": _frange(max(0.1, max_candle - 2.0), max_candle + 2.0, 0.1),
     }
 
 
@@ -154,10 +154,9 @@ def main() -> None:
             [str((cfg.get("execution", {}) or {}).get("intrabar_path", "ohlc"))],
             top_k=top_k,
             time_budget=time_budget,
-            search_mode=str(cfg.get("search_mode", "auto")),
-            n_samples=int(cfg.get("n_samples_per_ticker", cfg.get("n_samples", 1000))),
-            seed=int(cfg.get("random_seed", 0)),
-            max_exhaustive=int(cfg.get("max_exhaustive", 150000)),
+            # Checkpointed random-order walk over the whole refinement grid.
+            search_mode="randomized",
+            seed=derive_seed(int(cfg.get("random_seed", 0)), symbol, timeframe),
             execution=(cfg.get("execution", {}) or {}),
             robustness=(cfg.get("robustness", {}) or {}),
             phase=phase,

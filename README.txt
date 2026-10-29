@@ -79,11 +79,11 @@ constrained/fallback/expanded phases.
    presets.py. If both 15m and 30m TSVs are available for the symbol, refinement
    runs once per timeframe and writes timeframe-specific output files. The
    refinement grid narrows around each preset with these fixed windows:
-   stMultiplier ±0.4 by 0.1, stPeriod ±1 by 1, atrSLmult ±0.2 by 0.1,
-   atrTPmult ±0.5 by 0.1, and emaLen ±10 by 1. Single-ticker refinement keeps
+   stMultiplier ±1 by 0.1, stPeriod ±1 by 1, atrSLmult ±0.5 by 0.1,
+   atrTPmult ±0.5 by 0.1, emaLen ±10 by 1, and maxEntryCandleATR ±2 by 0.1
+   (about 6.5M combinations, walked in randomized order with the numba engine). Single-ticker refinement keeps
    only candidates with positive net profit, win rate >= 60%, profit factor >=
-   1.5, at least 100 trades, and max drawdown <= 25%. maxEntryCandleATR is
-   refined within +/-0.3 by 0.1.
+   1.5, at least 100 trades, and max drawdown <= 25%.
 
 Outputs:
 - optimizer_results/best_{SYMBOL}_preset.csv
