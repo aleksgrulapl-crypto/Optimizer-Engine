@@ -19,10 +19,10 @@ from optimizer_worker import optimize_ticker
 from presets import get_presets, normalize_timeframe
 
 REFINEMENT_FILTERS = {
-    "min_win_rate": 0.50,
-    "min_profit_factor": 1.4,
+    "min_win_rate": 0.60,
+    "min_profit_factor": 1.5,
     "min_net_profit": 0.0,
-    "min_trades": 10,
+    "min_trades": 100,
     "max_drawdown_pct": 0.25,
 }
 
@@ -57,6 +57,7 @@ def _build_refinement_grid(base: Dict[str, Any]) -> Dict[str, Any]:
     atr_sl = _safe_float(base.get("atrSLmult"), 1.2)
     atr_tp = _safe_float(base.get("atrTPmult"), 3.0)
     ema_len = _safe_int(base.get("emaLen"), 50)
+    max_candle = _safe_float(base.get("maxEntryCandleATR"), 1.5)
 
     return {
         "stMultiplier": _frange(max(0.2, st_mult - 0.4), st_mult + 0.4, 0.1),
@@ -64,6 +65,7 @@ def _build_refinement_grid(base: Dict[str, Any]) -> Dict[str, Any]:
         "atrSLmult": _frange(max(0.2, atr_sl - 0.2), atr_sl + 0.2, 0.1),
         "atrTPmult": _frange(max(0.5, atr_tp - 0.5), atr_tp + 0.5, 0.1),
         "emaLen": list(range(max(5, ema_len - 10), ema_len + 11)),
+        "maxEntryCandleATR": _frange(max(0.5, max_candle - 0.3), max_candle + 0.3, 0.1),
     }
 
 

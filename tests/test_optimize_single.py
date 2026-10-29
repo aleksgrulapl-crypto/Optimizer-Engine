@@ -16,7 +16,9 @@ class RefinementGridTests(unittest.TestCase):
             "atrSLmult": 1.4,
             "atrTPmult": 4.9,
             "emaLen": 140,
+            "maxEntryCandleATR": 1.5,
         })
+        self.assertEqual(grid["maxEntryCandleATR"], [1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8])
         self.assertEqual(grid["stMultiplier"], [2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3.0, 3.1, 3.2])
         self.assertEqual(grid["stPeriod"], [9, 10, 11])
         self.assertEqual(grid["atrSLmult"], [1.2, 1.3, 1.4, 1.5, 1.6])
@@ -42,9 +44,9 @@ class RefinementFilterTests(unittest.TestCase):
     def test_passes_when_all_refinement_thresholds_are_met(self):
         metrics = {
             "net_profit": 100.0,
-            "profit_factor": 1.4,
-            "win_rate": 0.50,
-            "trade_count": 25,
+            "profit_factor": 1.5,
+            "win_rate": 0.60,
+            "trade_count": 100,
             "max_drawdown_pct": 0.25,
         }
         self.assertTrue(passes_filters(metrics, REFINEMENT_FILTERS))
@@ -53,8 +55,8 @@ class RefinementFilterTests(unittest.TestCase):
         metrics = {
             "net_profit": 100.0,
             "profit_factor": 1.6,
-            "win_rate": 0.55,
-            "trade_count": 25,
+            "win_rate": 0.65,
+            "trade_count": 100,
             "max_drawdown_pct": 0.2501,
         }
         self.assertFalse(passes_filters(metrics, REFINEMENT_FILTERS))

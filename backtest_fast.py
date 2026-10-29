@@ -163,7 +163,7 @@ def _record(out_i, tr_side, tr_entry_bar, tr_exit_bar, tr_entry_px, tr_exit_px, 
 
 @njit(cache=True)
 def _simulate(open_, high, low, close, atr, trend, ema,
-              atr_sl_mult, atr_tp_mult, slippage, commission_pct, position_size,
+              max_candle_atr, atr_sl_mult, atr_tp_mult, slippage, commission_pct, position_size,
               pyramiding, ohlc, same_bar):
     n = len(close)
     cap = max(pyramiding, 1) + 1
@@ -196,7 +196,13 @@ def _simulate(open_, high, low, close, atr, trend, ema,
 
         long_sig = False
         short_sig = False
-        if i > 0:
+        # Pine: |close-open| >= nz(atr[1], atr) * maxEntryCandleATR rejects the entry
+        big_breakout = False
+        if have_atr:
+            atr_ref = atr[i - 1] if (i > 0 and not np.isnan(atr[i - 1])) else a
+            big_breakout = abs(c - o) >= atr_ref * max_candle_atr
+
+        if i > 0 and not big_breakout:
             if trend[i] == 1 and trend[i - 1] == -1 and ema[i] > ema[i - 1]:
                 long_sig = True
             elif trend[i] == -1 and trend[i - 1] == 1 and ema[i] < ema[i - 1]:
@@ -395,6 +401,7 @@ def run_backtest(candles: List[Dict[str, Any]], params: Dict[str, Any],
     atr_sl = float(params.get("atrSLmult", p.get("atrSLmult", 1.4)))
     atr_tp = float(params.get("atrTPmult", p.get("atrTPmult", 2.4)))
     ema_len = int(params.get("emaLen", p.get("emaLen", 200)))
+    max_candle_atr = float(params.get("maxEntryCandleATR", p.get("maxEntryCandleATR", 1.5)))
 
     slippage = float(params.get("slippage", 0.0))
     commission_pct = float(params.get("commission_pct", 0.0))
@@ -413,7 +420,7 @@ def run_backtest(candles: List[Dict[str, Any]], params: Dict[str, Any],
 
     (nt, side, entry_bar, exit_bar, entry_px, exit_px, size, pnl, gross, comm, reason) = _simulate(
         data.open, data.high, data.low, data.close, atr, trend, ema,
-        atr_sl, atr_tp, slippage, commission_pct, position_size,
+                max_candle_atr, atr_sl, atr_tp, slippage, commission_pct, position_size,
         pyramiding, ohlc, same_bar,
     )
 

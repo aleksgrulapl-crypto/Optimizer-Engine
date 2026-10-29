@@ -18,10 +18,10 @@ except ImportError:  # numba not installed: fall back to the pure-Python engine
     from backtest_engine import run_backtest
 
 # Default acceptance filters for a candidate to be considered suitable:
-# win rate >= 45%, profit factor >= 1.4, strictly positive net profit, low DD.
+# win rate >= 60%, profit factor >= 1.5, strictly positive net profit, 100+ trades, low DD.
 DEFAULT_FILTERS: Dict[str, Any] = {
-    "min_win_rate": 0.45,
-    "min_profit_factor": 1.4,
+    "min_win_rate": 0.60,
+    "min_profit_factor": 1.5,
     "min_net_profit": 0.0,
     "min_trades": 100,
     "max_drawdown_pct": 0.25,
@@ -29,12 +29,12 @@ DEFAULT_FILTERS: Dict[str, Any] = {
 
 # Strong-candidate bar: a ticker/timeframe run is only considered complete
 # once at least one candidate clears these thresholds - strictly positive net
-# profit, profit factor >= 1.4, win rate >= 45%, at least 100 trades, and low max
+# profit, profit factor >= 1.5, win rate >= 60%, at least 100 trades, and low max
 # drawdown. The orchestrator uses this bar to summarize whether a ticker is
 # ready to move on.
 STRONG_FILTERS: Dict[str, Any] = {
-    "min_win_rate": 0.45,
-    "min_profit_factor": 1.4,
+    "min_win_rate": 0.60,
+    "min_profit_factor": 1.5,
     "min_net_profit": 0.0,
     "min_trades": 100,
     "max_drawdown_pct": 0.25,
@@ -287,11 +287,11 @@ def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
     dd_pct = float(metrics.get("max_drawdown_pct", 0.0))
     if net <= float(filters.get("min_net_profit", 0.0)):
         return False
-    if pf < float(filters.get("min_profit_factor", 1.4)):
+    if pf < float(filters.get("min_profit_factor", 1.5)):
         return False
-    if wr < float(filters.get("min_win_rate", 0.40)):
+    if wr < float(filters.get("min_win_rate", 0.60)):
         return False
-    if tc < int(filters.get("min_trades", 10)):
+    if tc < int(filters.get("min_trades", 100)):
         return False
     max_dd_pct = filters.get("max_drawdown_pct", None)
     if max_dd_pct is not None and dd_pct > float(max_dd_pct):
@@ -300,7 +300,7 @@ def passes_filters(metrics: Dict[str, Any], filters: Dict[str, Any]) -> bool:
 
 
 def is_strong_candidate(metrics: Dict[str, Any], strong_filters: Dict[str, Any] = None) -> bool:
-    """Check for positive profit, PF >= 1.4, win rate >= 45%, 100+ trades,
+    """Check for positive profit, PF >= 1.5, win rate >= 60%, 100+ trades,
     and low max drawdown before treating a ticker/timeframe run as complete."""
     if not passes_filters(metrics, {**STRONG_FILTERS, **(strong_filters or {})}):
         return False
@@ -657,7 +657,7 @@ def optimize_ticker(cfg: Dict[str, Any],
             res = run_backtest(candles, run_params)
             metrics = compute_metrics_from_run(res)
 
-            # Hard filters (defaults: net profit > 0, PF >= 1.4, win rate >= 45%,
+            # Hard filters (defaults: net profit > 0, PF >= 1.5, win rate >= 60%,
             # max drawdown <= 25%, at least 100 trades)
             pf = float(metrics.get("profit_factor", 0.0))
             net = float(metrics.get("net_profit", 0.0))

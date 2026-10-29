@@ -290,6 +290,7 @@ def run_backtest(candles: List[Dict[str, Any]], params: Dict[str, Any]) -> Dict[
     Expected candle dict keys: time, open, high, low, close, volume (volume optional).
     Params supports:
       ticker, stMultiplier, stPeriod, atrSLmult, atrTPmult, emaLen,
+      maxEntryCandleATR (reject entries whose candle body >= this * previous ATR),
       slippage (price units), commission_pct (fraction), position_size (contracts),
       leverage (margin), pyramiding (int), intrabar_path ("ohlc" or "olhc"),
       allow_same_bar_exit_entry (bool) - whether entries can be exited on same bar intrabar.
@@ -305,6 +306,7 @@ def run_backtest(candles: List[Dict[str, Any]], params: Dict[str, Any]) -> Dict[
     atrSLmult    = float(params.get("atrSLmult", p.get("atrSLmult", 1.4)))
     atrTPmult    = float(params.get("atrTPmult", p.get("atrTPmult", 2.4)))
     emaLen       = int(params.get("emaLen", p.get("emaLen", 200)))
+    maxEntryCandleATR = float(params.get("maxEntryCandleATR", p.get("maxEntryCandleATR", 1.5)))
 
     slippage = float(params.get("slippage", 0.0))            # price units per fill
     commission_pct = float(params.get("commission_pct", 0.0)) # fraction of trade value per side
@@ -392,8 +394,14 @@ def run_backtest(candles: List[Dict[str, Any]], params: Dict[str, Any]) -> Dict[
         atr_i = atr[i] if i < len(atr) else None
         ema_ok = (emaTrend[i] is not None and emaTrend[i-1] is not None) if i > 0 else False
 
-        longSignal = buy and ema_ok and emaUp[i]
-        shortSignal = sell and ema_ok and emaDown[i]
+        # Pine: bigBreakoutCandle = |close-open| >= nz(atr[1], atr) * maxEntryCandleATR
+        big_breakout = False
+        if atr_i is not None:
+            atr_ref = atr[i-1] if (i > 0 and atr[i-1] is not None) else atr_i
+            big_breakout = abs(close - open_p) >= atr_ref * maxEntryCandleATR
+
+        longSignal = buy and ema_ok and emaUp[i] and not big_breakout
+        shortSignal = sell and ema_ok and emaDown[i] and not big_breakout
 
         # Compute ATR-based SL/TP distances for this bar (use atr[i] if available)
         atrSL = (atr_i * atrSLmult) if atr_i is not None else None
