@@ -43,10 +43,11 @@ class UnifiedGridConfigTests(unittest.TestCase):
         self.assertEqual(grid["stPeriod"], {"start": 5, "stop": 18, "step": 1})
         self.assertEqual(grid["atrSLmult"], {"start": 1.0, "stop": 3.0, "step": 0.1})
         self.assertEqual(grid["atrTPmult"], {"start": 1.2, "stop": 5.0, "step": 0.1})
-        self.assertEqual(grid["emaLen"], {"start": 40, "stop": 240, "step": 1})
+        self.assertEqual(grid["emaLen"], {"start": 20, "stop": 300, "step": 5})
+        self.assertEqual(grid["maxEntryCandleATR"], {"start": 1.0, "stop": 3.0, "step": 0.2})
         expanded = {key: ow._expand_spec(spec) for key, spec in grid.items()}
-        self.assertEqual([len(values) for values in expanded.values()], [81, 14, 21, 39, 201])
-        self.assertEqual(ow._count_combinations(expanded), 186_677_946)
+        self.assertEqual([len(values) for values in expanded.values()], [81, 14, 21, 39, 57, 11])
+        self.assertEqual(ow._count_combinations(expanded), 582_323_742)
         self.assertTrue(all(isinstance(value, int) for value in expanded["stPeriod"]))
         self.assertTrue(all(isinstance(value, int) for value in expanded["emaLen"]))
 
@@ -63,8 +64,8 @@ class UnifiedGridConfigTests(unittest.TestCase):
     def test_default_candidate_requirements_match_requested_thresholds(self):
         config = oa.merge_with_defaults({})
         expected = {
-            "min_win_rate": 0.45,
-            "min_profit_factor": 1.4,
+            "min_win_rate": 0.60,
+            "min_profit_factor": 1.5,
             "min_net_profit": 0.0,
             "min_trades": 100,
             "max_drawdown_pct": 0.25,
@@ -108,8 +109,15 @@ class PresetTimeframeTests(unittest.TestCase):
         self.assertEqual(normalize_timeframe("60m"), "60M")
         self.assertEqual(normalize_timeframe("60min"), "60M")
 
-    def test_one_hour_timeframe_uses_closest_existing_preset(self):
-        self.assertEqual(get_presets("AMAT", "60m"), get_presets("AMAT", "30m"))
+    def test_one_hour_timeframe_has_its_own_preset(self):
+        self.assertEqual(get_presets("AAPL", "60m")["emaLen"], 120)
+        self.assertEqual(get_presets("AAPL", "1h"), get_presets("AAPL", "60m"))
+        self.assertNotEqual(get_presets("AMAT", "60m"), get_presets("AMAT", "30m"))
+
+    def test_presets_include_max_entry_candle_atr(self):
+        for timeframe in ("15M", "30M", "60M"):
+            self.assertEqual(get_presets("NVDA", timeframe)["maxEntryCandleATR"], 1.5)
+            self.assertEqual(get_presets("UNKNOWN", timeframe)["maxEntryCandleATR"], 1.5)
 
 
 class RandomizedGridTests(unittest.TestCase):
@@ -192,6 +200,17 @@ class ScoringTests(unittest.TestCase):
         )
         self.assertIs(ordered[0], low_drawdown)
         self.assertIs(ordered[1], high_score)
+
+
+    def test_score_is_deterministic_for_identical_metrics(self):
+        metrics = {
+            "net_profit": 321.5,
+            "profit_factor": 1.9,
+            "win_rate": 0.63,
+            "trade_count": 140,
+            "max_drawdown_pct": 0.11,
+        }
+        self.assertEqual(len({ow.score_candidate(dict(metrics)) for _ in range(50)}), 1)
 
 
 class ResumeTests(unittest.TestCase):

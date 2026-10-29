@@ -36,8 +36,8 @@ mid-run, as soon as it finds a suitable candidate strictly better than the best
 that existed when the run started (the initial/previous best never counts), or
 when its hour is up. optimization.rounds_per_timeframe (default 1) can split
 the hour into several equal rounds. The acceptance bar is
-positive net profit, profit factor >= 1.4, win rate >= 40%, and a reasonably
-low max drawdown (<= 25% by default).
+positive net profit, profit factor >= 1.5, win rate >= 60%, at least 100 trades,
+and a low max drawdown (<= 25% by default).
 
 Candidate suitability filters and the gating summary thresholds are
 configurable via the staged_search block in tickers.yaml (filters /
@@ -79,10 +79,11 @@ constrained/fallback/expanded phases.
    presets.py. If both 15m and 30m TSVs are available for the symbol, refinement
    runs once per timeframe and writes timeframe-specific output files. The
    refinement grid narrows around each preset with these fixed windows:
-   stMultiplier ±0.4 by 0.1, stPeriod ±1 by 1, atrSLmult ±0.2 by 0.1,
-   atrTPmult ±0.5 by 0.1, and emaLen ±10 by 1. Single-ticker refinement keeps
-   only candidates with positive net profit, win rate >= 50%, profit factor >=
-   1.4, at least 10 trades, and max drawdown <= 25%.
+   stMultiplier ±1 by 0.1, stPeriod ±1 by 1, atrSLmult ±0.5 by 0.1,
+   atrTPmult ±0.5 by 0.1, emaLen ±10 by 1, and maxEntryCandleATR ±2 by 0.1
+   (about 6.5M combinations, walked in randomized order with the numba engine). Single-ticker refinement keeps
+   only candidates with positive net profit, win rate >= 60%, profit factor >=
+   1.5, at least 100 trades, and max drawdown <= 25%.
 
 Outputs:
 - optimizer_results/best_{SYMBOL}_preset.csv

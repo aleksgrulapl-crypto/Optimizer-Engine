@@ -2,7 +2,7 @@
 # Workflow: data sanity -> parity check -> randomized unified grid per
 # ticker/timeframe -> robustness validation -> manual gate
 # A ticker is only treated as ready to move on once it has a suitable candidate
-# (positive net profit, PF >= 1.4, WR >= 45%, 100+ trades, low drawdown) and you approve the
+# (positive net profit, PF >= 1.5, WR >= 60%, 100+ trades, low drawdown) and you approve the
 # prompt to continue to the next ticker below.
 # Set Status: Completed to skip a ticker you are happy with; use Incomplete to
 # keep it in the optimization queue. Omitted Status values default to Incomplete.
@@ -1028,7 +1028,7 @@ parity:
   require_tv_export: false
   require_parity_ok: true
 
-# One complete grid. The worker traverses all 25,076,142 combinations in a
+# One complete grid. The worker traverses all 582,323,742 combinations in a
 # deterministic randomized order without loading them into memory. Completed
 # combinations and the traversal position are persisted, so restarts continue
 # through unevaluated combinations.
@@ -1050,9 +1050,13 @@ grid:
     stop: 5.0
     step: 0.1
   emaLen:
-    start: 40
-    stop: 240
-    step: 1
+    start: 20
+    stop: 300
+    step: 5
+  maxEntryCandleATR:
+    start: 1.0
+    stop: 3.0
+    step: 0.2
 
 random_seed: 42
 
@@ -1063,19 +1067,19 @@ time_budget_seconds_per_ticker: 3600
 # A candidate is suitable when it passes all filters. Candidates are scored
 # from 0 to 100, with lower drawdown preferred when scores tie.
 optimization:
-  # randomized = checkpointed, resumable random-order walk (spreads samples across the 186M-point grid);
+  # randomized = checkpointed, resumable random-order walk (spreads samples across the 582M-point grid);
   # full = whole grid in lexicographic order (only the last parameters vary in early windows)
   search_mode: randomized
   filters:
-    min_win_rate: 0.45        # at least 45% win rate
-    min_profit_factor: 1.4    # profit factor of at least 1.4
+    min_win_rate: 0.60        # at least 60% win rate
+    min_profit_factor: 1.5    # profit factor of at least 1.5
     min_net_profit: 0.0       # strictly positive net profit
     min_trades: 100
     max_drawdown_pct: 0.25    # low max drawdown (<= 25%)
   # strong-candidate bar used by the interactive gating summary
   strong_filters:
-    min_win_rate: 0.45            # at least 45% win rate
-    min_profit_factor: 1.4        # profit factor of at least 1.4
+    min_win_rate: 0.60            # at least 60% win rate
+    min_profit_factor: 1.5        # profit factor of at least 1.5
     min_net_profit: 0.0           # strictly positive net profit
     min_trades: 100
     max_drawdown_pct: 0.25        # low max drawdown (<= 25%)

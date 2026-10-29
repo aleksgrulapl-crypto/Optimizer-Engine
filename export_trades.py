@@ -86,6 +86,7 @@ def main() -> None:
     parser.add_argument("--atr-sl-mult", type=float, default=None)
     parser.add_argument("--atr-tp-mult", type=float, default=None)
     parser.add_argument("--ema-len", type=int, default=None)
+    parser.add_argument("--max-entry-candle-atr", type=float, default=None)
 
     args = parser.parse_args()
 
@@ -110,6 +111,11 @@ def main() -> None:
         "atrSLmult": args.atr_sl_mult if args.atr_sl_mult is not None else preset.get("atrSLmult"),
         "atrTPmult": args.atr_tp_mult if args.atr_tp_mult is not None else preset.get("atrTPmult"),
         "emaLen": args.ema_len if args.ema_len is not None else preset.get("emaLen"),
+        "maxEntryCandleATR": (
+            args.max_entry_candle_atr
+            if args.max_entry_candle_atr is not None
+            else preset.get("maxEntryCandleATR")
+        ),
     }
 
     try:
