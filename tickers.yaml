@@ -2,7 +2,7 @@
 # Workflow: data sanity -> parity check -> randomized unified grid per
 # ticker/timeframe -> robustness validation -> manual gate
 # A ticker is only treated as ready to move on once it has a suitable candidate
-# (positive net profit, PF >= 1.5, WR >= 60%, 100+ trades, low drawdown) and you approve the
+# (positive net profit, PF >= 1.8, WR >= 60%, 100+ trades, low drawdown) and you approve the
 # prompt to continue to the next ticker below.
 # Set Status: Completed to skip a ticker you are happy with; use Incomplete to
 # keep it in the optimization queue. Omitted Status values default to Incomplete.
@@ -1028,7 +1028,7 @@ parity:
   require_tv_export: false
   require_parity_ok: true
 
-# One complete grid. The worker traverses all 582,323,742 combinations in a
+# One complete grid. The worker traverses all 565,606,314 combinations in a
 # deterministic randomized order without loading them into memory. Completed
 # combinations and the traversal position are persisted, so restarts continue
 # through unevaluated combinations.
@@ -1052,11 +1052,11 @@ grid:
   emaLen:
     start: 20
     stop: 300
-    step: 5
+    step: 10
   maxEntryCandleATR:
     start: 1.0
     stop: 3.0
-    step: 0.2
+    step: 0.1
 
 random_seed: 42
 
@@ -1067,24 +1067,24 @@ time_budget_seconds_per_ticker: 3600
 # A candidate is suitable when it passes all filters. Candidates are scored
 # from 0 to 100, with lower drawdown preferred when scores tie.
 optimization:
-  # randomized = checkpointed, resumable random-order walk (spreads samples across the 582M-point grid);
+  # randomized = checkpointed, resumable random-order walk (spreads samples across the 566M-point grid);
   # full = whole grid in lexicographic order (only the last parameters vary in early windows)
   search_mode: randomized
   filters:
     min_win_rate: 0.60        # at least 60% win rate
-    min_profit_factor: 1.5    # profit factor of at least 1.5
+    min_profit_factor: 1.8    # profit factor of at least 1.8
     min_net_profit: 0.0       # strictly positive net profit
     min_trades: 100
-    max_drawdown_pct: 0.25    # low max drawdown (<= 25%)
+    max_drawdown_pct: 0.20    # low max drawdown (<= 20%)
   # strong-candidate bar used by the interactive gating summary
   strong_filters:
     min_win_rate: 0.60            # at least 60% win rate
-    min_profit_factor: 1.5        # profit factor of at least 1.5
+    min_profit_factor: 1.8        # profit factor of at least 1.8
     min_net_profit: 0.0           # strictly positive net profit
     min_trades: 100
-    max_drawdown_pct: 0.25        # low max drawdown (<= 25%)
+    max_drawdown_pct: 0.20        # low max drawdown (<= 20%)
   workers: 2                        # tickers optimized in parallel (raise to 3 if RAM allows)
-  progress_every: 15000             # print a progress line every N grid positions
+  progress_every: 100000             # print a progress line every N grid positions
   timeframe_time_budget_seconds: 3600 # max time per ticker/timeframe (3 timeframes = up to 3h per ticker)
   rounds_per_timeframe: 1           # a new best suitable candidate moves on immediately
 
