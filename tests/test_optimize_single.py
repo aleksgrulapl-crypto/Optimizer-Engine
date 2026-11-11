@@ -45,20 +45,20 @@ class RefinementFilterTests(unittest.TestCase):
     def test_passes_when_all_refinement_thresholds_are_met(self):
         metrics = {
             "net_profit": 100.0,
-            "profit_factor": 1.5,
+            "profit_factor": 1.8,
             "win_rate": 0.60,
             "trade_count": 100,
-            "max_drawdown_pct": 0.25,
+            "max_drawdown_pct": 0.20,
         }
         self.assertTrue(passes_filters(metrics, REFINEMENT_FILTERS))
 
     def test_rejects_when_drawdown_exceeds_cap(self):
         metrics = {
             "net_profit": 100.0,
-            "profit_factor": 1.6,
+            "profit_factor": 1.9,
             "win_rate": 0.65,
             "trade_count": 100,
-            "max_drawdown_pct": 0.2501,
+            "max_drawdown_pct": 0.2001,
         }
         self.assertFalse(passes_filters(metrics, REFINEMENT_FILTERS))
 

@@ -43,11 +43,11 @@ class UnifiedGridConfigTests(unittest.TestCase):
         self.assertEqual(grid["stPeriod"], {"start": 5, "stop": 18, "step": 1})
         self.assertEqual(grid["atrSLmult"], {"start": 1.0, "stop": 3.0, "step": 0.1})
         self.assertEqual(grid["atrTPmult"], {"start": 1.2, "stop": 5.0, "step": 0.1})
-        self.assertEqual(grid["emaLen"], {"start": 20, "stop": 300, "step": 5})
-        self.assertEqual(grid["maxEntryCandleATR"], {"start": 1.0, "stop": 3.0, "step": 0.2})
+        self.assertEqual(grid["emaLen"], {"start": 20, "stop": 300, "step": 10})
+        self.assertEqual(grid["maxEntryCandleATR"], {"start": 1.0, "stop": 3.0, "step": 0.1})
         expanded = {key: ow._expand_spec(spec) for key, spec in grid.items()}
-        self.assertEqual([len(values) for values in expanded.values()], [81, 14, 21, 39, 57, 11])
-        self.assertEqual(ow._count_combinations(expanded), 582_323_742)
+        self.assertEqual([len(values) for values in expanded.values()], [81, 14, 21, 39, 29, 21])
+        self.assertEqual(ow._count_combinations(expanded), 565_606_314)
         self.assertTrue(all(isinstance(value, int) for value in expanded["stPeriod"]))
         self.assertTrue(all(isinstance(value, int) for value in expanded["emaLen"]))
 
@@ -65,10 +65,10 @@ class UnifiedGridConfigTests(unittest.TestCase):
         config = oa.merge_with_defaults({})
         expected = {
             "min_win_rate": 0.60,
-            "min_profit_factor": 1.5,
+            "min_profit_factor": 1.8,
             "min_net_profit": 0.0,
             "min_trades": 100,
-            "max_drawdown_pct": 0.25,
+            "max_drawdown_pct": 0.20,
         }
         self.assertEqual(config["optimization"]["filters"], expected)
         self.assertEqual(config["optimization"]["strong_filters"], expected)

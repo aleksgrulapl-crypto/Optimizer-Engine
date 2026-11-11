@@ -20,10 +20,10 @@ from presets import get_presets, normalize_timeframe
 
 REFINEMENT_FILTERS = {
     "min_win_rate": 0.60,
-    "min_profit_factor": 1.5,
+    "min_profit_factor": 1.8,
     "min_net_profit": 0.0,
     "min_trades": 100,
-    "max_drawdown_pct": 0.25,
+    "max_drawdown_pct": 0.20,
 }
 
 

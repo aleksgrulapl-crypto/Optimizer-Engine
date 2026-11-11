@@ -35,8 +35,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "stPeriod": {"start": 5, "stop": 18, "step": 1},
         "atrSLmult": {"start": 1.0, "stop": 3.0, "step": 0.1},
         "atrTPmult": {"start": 1.2, "stop": 5.0, "step": 0.1},
-        "emaLen": {"start": 20, "stop": 300, "step": 5},
-        "maxEntryCandleATR": {"start": 1.0, "stop": 3.0, "step": 0.2},
+        "emaLen": {"start": 20, "stop": 300, "step": 10},
+        "maxEntryCandleATR": {"start": 1.0, "stop": 3.0, "step": 0.1},
     },
     "intrabar_paths": ["ohlc"],
     "top_k_per_ticker": 10,
@@ -360,7 +360,7 @@ def _run_grid_cycle(
             optimization_config.get("checkpoint_every", 25000), 25000
         ),
         "progress_every": _read_positive_int(
-            optimization_config.get("progress_every", 15000), 15000
+            optimization_config.get("progress_every", 100000), 100000
         ),
     }
     if full_mode:
