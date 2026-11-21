@@ -17,6 +17,32 @@ try:
 except ImportError:  # numba not installed: fall back to the pure-Python engine
     from backtest_engine import run_backtest
 
+# Each strategy writes to its own sub-folder (e.g. optimizer_results/daybox/) so
+# results from different strategies never mix. The original strategy keeps the
+# original top-level folders.
+DEFAULT_STRATEGY = "supertrend"
+STRATEGIES = ("supertrend", "daybox")
+
+
+def normalize_strategy(strategy: Any) -> str:
+    name = str(strategy or DEFAULT_STRATEGY).strip().lower()
+    if name not in STRATEGIES:
+        raise ValueError(f"Unknown strategy '{strategy}' (expected one of: {', '.join(STRATEGIES)})")
+    return name
+
+
+def strategy_dir(base: str, strategy: str = DEFAULT_STRATEGY) -> Path:
+    name = normalize_strategy(strategy)
+    return Path(base) if name == DEFAULT_STRATEGY else Path(base) / name
+
+
+def get_backtest_runner(strategy: str = DEFAULT_STRATEGY) -> Callable:
+    """Lean backtest function for a strategy."""
+    if normalize_strategy(strategy) == "daybox":
+        from backtest_daybox import run_backtest_lean as daybox_run
+        return daybox_run
+    return run_backtest
+
 # Default acceptance filters for a candidate to be considered suitable:
 # win rate >= 60%, profit factor >= 1.8, strictly positive net profit, 100+ trades, low DD.
 DEFAULT_FILTERS: Dict[str, Any] = {
@@ -344,16 +370,18 @@ def _run_label(symbol: str, timeframe: Any = None) -> str:
     return label
 
 
-def _append_completed_run(label: str, phase: str, record: Dict[str, Any]) -> None:
-    out_dir = Path("completed_runs")
-    out_dir.mkdir(exist_ok=True)
+def _append_completed_run(label: str, phase: str, record: Dict[str, Any],
+                          strategy: str = DEFAULT_STRATEGY) -> None:
+    out_dir = strategy_dir("completed_runs", strategy)
+    out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{label}_{phase}.jsonl"
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
 
-def _load_completed_state(label: str, phase: str) -> Tuple[set, List[Dict[str, Any]], float, int]:
-    path = Path("completed_runs") / f"{label}_{phase}.jsonl"
+def _load_completed_state(label: str, phase: str,
+                          strategy: str = DEFAULT_STRATEGY) -> Tuple[set, List[Dict[str, Any]], float, int]:
+    path = strategy_dir("completed_runs", strategy) / f"{label}_{phase}.jsonl"
     if not path.exists():
         return set(), [], float("-inf"), 0
     keys = set()
@@ -392,22 +420,23 @@ def _load_completed_state(label: str, phase: str) -> Tuple[set, List[Dict[str, A
     return keys, candidates, best_score, resume_position
 
 
-def _checkpoint_path(label: str, phase: str) -> Path:
-    return Path("checkpoints") / f"{label}_{phase}.json"
+def _checkpoint_path(label: str, phase: str, strategy: str = DEFAULT_STRATEGY) -> Path:
+    return strategy_dir("checkpoints", strategy) / f"{label}_{phase}.json"
 
 
-def _load_checkpoint(label: str, phase: str) -> Dict[str, Any]:
+def _load_checkpoint(label: str, phase: str, strategy: str = DEFAULT_STRATEGY) -> Dict[str, Any]:
     try:
-        data = json.loads(_checkpoint_path(label, phase).read_text(encoding="utf-8"))
+        data = json.loads(_checkpoint_path(label, phase, strategy).read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
 
 def _save_checkpoint(label: str, phase: str, next_position: int, total: int,
-                     best: Dict[str, Any] = None, complete: bool = False) -> None:
-    path = _checkpoint_path(label, phase)
-    path.parent.mkdir(exist_ok=True)
+                     best: Dict[str, Any] = None, complete: bool = False,
+                     strategy: str = DEFAULT_STRATEGY) -> None:
+    path = _checkpoint_path(label, phase, strategy)
+    path.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "next_position": int(next_position),
         "total": int(total),
@@ -423,14 +452,15 @@ def _save_checkpoint(label: str, phase: str, next_position: int, total: int,
     os.replace(tmp, path)
 
 
-def _load_completed_keys(label: str, phase: str) -> set:
-    keys, _, _, _ = _load_completed_state(label, phase)
+def _load_completed_keys(label: str, phase: str, strategy: str = DEFAULT_STRATEGY) -> set:
+    keys, _, _, _ = _load_completed_state(label, phase, strategy)
     return keys
 
 
-def _write_best_csv(label: str, top: List[Dict[str, Any]], phase: str) -> str:
-    out_dir = Path("optimizer_results")
-    out_dir.mkdir(exist_ok=True)
+def _write_best_csv(label: str, top: List[Dict[str, Any]], phase: str,
+                    strategy: str = DEFAULT_STRATEGY) -> str:
+    out_dir = strategy_dir("optimizer_results", strategy)
+    out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / f"best_{label}_{phase}.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -452,9 +482,10 @@ def _write_best_csv(label: str, top: List[Dict[str, Any]], phase: str) -> str:
     return str(csv_path)
 
 
-def _write_report(label: str, top: List[Dict[str, Any]], phase: str, note: str, symbol: str = None, timeframe: Any = None) -> str:
-    out_dir = Path("optimizer_results")
-    out_dir.mkdir(exist_ok=True)
+def _write_report(label: str, top: List[Dict[str, Any]], phase: str, note: str, symbol: str = None, timeframe: Any = None,
+                  strategy: str = DEFAULT_STRATEGY) -> str:
+    out_dir = strategy_dir("optimizer_results", strategy)
+    out_dir.mkdir(parents=True, exist_ok=True)
     report_path = out_dir / f"report_{label}_{phase}.json"
     if top:
         best = top[0]
@@ -492,6 +523,7 @@ def _robustness_filter(
     candles: List[Dict[str, Any]],
     candidates: List[Dict[str, Any]],
     robustness_cfg: Dict[str, Any],
+    run_backtest: Callable = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     if not bool(robustness_cfg.get("enabled", True)):
         return candidates, "robustness disabled"
@@ -501,6 +533,7 @@ def _robustness_filter(
     pf_floor = float(robustness_cfg.get("reject_if_any_segment_pf_below", 1.0))
     net_floor = float(robustness_cfg.get("reject_if_any_segment_net_profit_below_or_equal", 0.0))
 
+    run_backtest = run_backtest or get_backtest_runner()
     segmented = _segment_candles(candles, segments)
     if len(segmented) <= 1:
         return candidates, "robustness skipped (not enough candles)"
@@ -556,9 +589,13 @@ def optimize_ticker(cfg: Dict[str, Any],
                     max_positions: int = None,
                     checkpoint_every: int = 25000,
                     stop_when: Callable[[Dict[str, Any]], bool] = None,
-                    progress_every: int = 1000) -> Dict[str, Any]:
+                    progress_every: int = 1000,
+                    strategy: str = DEFAULT_STRATEGY,
+                    fixed_params: Dict[str, Any] = None) -> Dict[str, Any]:
     """In "full" mode, max_positions is the window of grid positions evaluated per
     run (counted from the checkpoint), and stop_when(candidate) ends the run early."""
+    strategy = normalize_strategy(strategy)
+    run_backtest = get_backtest_runner(strategy)
     symbol = cfg.get("symbol")
     tsv = cfg.get("tsv")
     timeframe = cfg.get("timeframe")
@@ -570,7 +607,7 @@ def optimize_ticker(cfg: Dict[str, Any],
     filters = {**DEFAULT_FILTERS, **(filters or {})}
 
     candles = load_candles_from_csv(tsv)
-    completed_keys, best_candidates, best_score_so_far, resume_position = _load_completed_state(label, phase)
+    completed_keys, best_candidates, best_score_so_far, resume_position = _load_completed_state(label, phase, strategy)
 
     evaluated = 0
 
@@ -591,11 +628,11 @@ def optimize_ticker(cfg: Dict[str, Any],
     start_position = 0
     if full_mode:
         time_budget = float("inf")
-        start_position = int(_load_checkpoint(label, phase).get("next_position", 0) or 0)
+        start_position = int(_load_checkpoint(label, phase, strategy).get("next_position", 0) or 0)
         scan_counter = start_position * len(intrabar_paths)
     elif search_mode == "randomized":
         start_position = max(
-            resume_position, int(_load_checkpoint(label, phase).get("next_position", 0) or 0)
+            resume_position, int(_load_checkpoint(label, phase, strategy).get("next_position", 0) or 0)
         )
     checkpointed = search_mode in ("full", "randomized")
     last_position = start_position
@@ -620,7 +657,7 @@ def optimize_ticker(cfg: Dict[str, Any],
         last_position = search_position + 1
         if checkpointed and search_position % checkpoint_every == 0:
             _save_checkpoint(label, phase, search_position, total_combos // len(intrabar_paths),
-                             best_candidates[0] if best_candidates else None)
+                             best_candidates[0] if best_candidates else None, strategy=strategy)
 
         if (search_position - start_position) % progress_every == 0:
             grid_total = total_combos // len(intrabar_paths)
@@ -638,6 +675,7 @@ def optimize_ticker(cfg: Dict[str, Any],
         for path in intrabar_paths:
             scan_counter += 1
             run_params = dict(params)
+            run_params.update(fixed_params or {})
             run_params.update({
                 "ticker": symbol,
                 "timeframe": timeframe,
@@ -696,7 +734,7 @@ def optimize_ticker(cfg: Dict[str, Any],
                 "score": score,
                 "status": "accepted"
             }
-            _append_completed_run(label, phase, rec)
+            _append_completed_run(label, phase, rec, strategy)
             completed_keys.add(key)
             evaluated += 1
 
@@ -722,17 +760,20 @@ def optimize_ticker(cfg: Dict[str, Any],
     if checkpointed:
         _save_checkpoint(label, phase, last_position, total_combos // len(intrabar_paths),
                          best_candidates[0] if best_candidates else None,
-                         complete=last_position >= total_combos // len(intrabar_paths))
+                         complete=last_position >= total_combos // len(intrabar_paths),
+                         strategy=strategy)
 
     robust_note = "robustness not run"
     if best_candidates:
-        best_candidates, robust_note = _robustness_filter(candles, best_candidates, robustness)
+        best_candidates, robust_note = _robustness_filter(
+            candles, best_candidates, robustness, run_backtest)
         _sort_candidates(best_candidates, top_k)
 
     top = best_candidates[:top_k]
 
-    csv_path = _write_best_csv(label, top, phase)
-    report_path = _write_report(label, top, phase, robust_note, symbol=symbol, timeframe=timeframe)
+    csv_path = _write_best_csv(label, top, phase, strategy)
+    report_path = _write_report(label, top, phase, robust_note, symbol=symbol, timeframe=timeframe,
+                          strategy=strategy)
 
     elapsed = time.time() - start_time
     return {

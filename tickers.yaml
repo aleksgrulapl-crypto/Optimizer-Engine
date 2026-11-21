@@ -1095,3 +1095,25 @@ robustness:
   evaluate_top_n: 10
   reject_if_any_segment_pf_below: 1.2
   reject_if_any_segment_net_profit_below_or_equal: 0.0
+
+# Day Box strategy (optimize_all.py --strategy daybox). Uses the same tickers,
+# TSV data and filters as above; results go to optimizer_results/daybox/,
+# completed_runs/daybox/ and checkpoints/daybox/. Everything below is optional.
+daybox:
+  grid:                       # percent of price, except riskReward (multiple of risk)
+    retestTolerancePct:      {start: 0.02, stop: 0.50, step: 0.02}
+    rejectionTolerancePct:   {start: 0.02, stop: 0.50, step: 0.02}
+    riskReward:              {start: 1.0, stop: 4.0, step: 0.1}
+    slBufferPct:             {start: 0.02, stop: 0.50, step: 0.02}
+  execution:
+    intrabar_path: tv         # tv = TradingView rule; ohlc / olhc also accepted
+  params:                     # fixed Pine inputs (not optimized)
+    dayTimezone: America/New_York   # timezone used to split days (exchange time)
+    utcOffset: 0
+    enableBreakouts: true
+    enableRejections: true
+    enableLongs: true
+    enableShorts: true
+    requireBreakoutClose: true
+    requireCloseInside: true
+    mintick: 0.01

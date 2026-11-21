@@ -1,9 +1,11 @@
 """Run a resumable randomized optimization grid for every ticker and timeframe."""
 
+import argparse
 import csv
 import json
 import os
 import re
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from time import sleep, time
@@ -12,10 +14,14 @@ from typing import Any, Dict, List, Tuple
 from data_loader import load_candles_from_csv
 from optimizer_worker import (
     DEFAULT_FILTERS,
+    DEFAULT_STRATEGY,
+    STRATEGIES,
     STRONG_FILTERS,
     derive_seed,
     is_strong_candidate,
+    normalize_strategy,
     optimize_ticker,
+    strategy_dir,
     _load_completed_state,
     _run_label,
 )
@@ -70,6 +76,19 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
+# Day Box strategy: percent-based parameters; defaults mirror the Pine presets
+# (retest 0.10, rejection 0.10, RR 2.0, SL buffer 0.10). Override in tickers.yaml
+# under `daybox:`.
+DAYBOX_DEFAULT_GRID: Dict[str, Any] = {
+    "retestTolerancePct": {"start": 0.02, "stop": 0.50, "step": 0.02},
+    "rejectionTolerancePct": {"start": 0.02, "stop": 0.50, "step": 0.02},
+    "riskReward": {"start": 1.0, "stop": 4.0, "step": 0.1},
+    "slBufferPct": {"start": 0.02, "stop": 0.50, "step": 0.02},
+}
+
+STRATEGY_LABELS = {"supertrend": "Supertrend", "daybox": "Day Box"}
+
+
 def load_yaml_config(path: str = "tickers.yaml") -> Dict[str, Any]:
     config_path = Path(path)
     if not config_path.exists():
@@ -111,6 +130,68 @@ def load_config() -> Dict[str, Any]:
     if json_config:
         return merge_with_defaults(json_config)
     return json.loads(json.dumps(DEFAULT_CONFIG))
+
+
+def apply_strategy(config: Dict[str, Any], strategy: str) -> Dict[str, Any]:
+    """Return a copy of `config` specialised for `strategy`.
+
+    Supertrend runs use the top-level settings unchanged. Day Box swaps in its own
+    grid and applies the optional `daybox:` overrides (grid, execution,
+    optimization, robustness, params, random_seed, ...).
+    """
+    strategy = normalize_strategy(strategy)
+    result = json.loads(json.dumps(config))
+    result["strategy"] = strategy
+    result["strategy_params"] = {}
+    if strategy == DEFAULT_STRATEGY:
+        return result
+
+    overrides = result.pop("daybox", None) or {}
+    result["grid"] = overrides.get("grid") or DAYBOX_DEFAULT_GRID
+    result["strategy_params"] = dict(overrides.get("params") or {})
+    for key in ("execution", "optimization", "robustness"):
+        section = overrides.get(key)
+        if isinstance(section, dict):
+            merged = dict(result.get(key) or {})
+            merged.update(section)
+            result[key] = merged
+    for key in ("random_seed", "top_k_per_ticker", "time_budget_seconds_per_ticker"):
+        if key in overrides:
+            result[key] = overrides[key]
+    return result
+
+
+def choose_strategy(argv: List[str] = None) -> str:
+    """Strategy from --strategy, else an interactive prompt when attached to a
+    terminal, else the default (so unattended runs never block)."""
+    parser = argparse.ArgumentParser(description="Run the randomized optimizer.")
+    parser.add_argument(
+        "--strategy",
+        choices=STRATEGIES,
+        default=None,
+        help="supertrend (default) or daybox",
+    )
+    return resolve_strategy(parser.parse_args(argv).strategy)
+
+
+def resolve_strategy(strategy: str = None) -> str:
+    """Return `strategy` if given, else prompt (terminal) or use the default."""
+    if strategy:
+        return normalize_strategy(strategy)
+    if not sys.stdin or not sys.stdin.isatty():
+        print(f"No --strategy given and no terminal attached; using {DEFAULT_STRATEGY}.")
+        return DEFAULT_STRATEGY
+    print("Select strategy to optimize:")
+    for number, name in enumerate(STRATEGIES, start=1):
+        print(f"  {number}. {STRATEGY_LABELS[name]}")
+    while True:
+        answer = input("Enter 1 or 2: ").strip().lower()
+        if answer in {str(n) for n in range(1, len(STRATEGIES) + 1)}:
+            return STRATEGIES[int(answer) - 1]
+        for name in STRATEGIES:
+            if answer in (name, STRATEGY_LABELS[name].lower()):
+                return name
+        print("Invalid choice.")
 
 
 def discover_tsvs_auto() -> List[Dict[str, Any]]:
@@ -287,9 +368,9 @@ def _print_symbol_summary(symbol: str, results: List[Dict[str, Any]]) -> None:
 
 
 class _TickerLock:
-    def __init__(self, symbol: str):
+    def __init__(self, symbol: str, strategy: str = DEFAULT_STRATEGY):
         safe_symbol = re.sub(r"[^A-Za-z0-9_.-]+", "_", symbol.upper())
-        self.path = Path("optimizer_results") / ".locks" / f"{safe_symbol}.lock"
+        self.path = strategy_dir("optimizer_results", strategy) / ".locks" / f"{safe_symbol}.lock"
         self.handle = None
 
     def acquire(self) -> bool:
@@ -385,6 +466,8 @@ def _run_grid_cycle(
         robustness=(config.get("robustness", {}) or {}),
         phase="grid",
         filters=(optimization_config.get("filters", None) or None),
+        strategy=config.get("strategy", DEFAULT_STRATEGY),
+        fixed_params=(config.get("strategy_params", None) or None),
         **gate,
     )
     return _mark_suitable(result, strong_filters)
@@ -425,7 +508,9 @@ def _run_timeframe(
         **(optimization_config.get("strong_filters", {}) or {}),
     }
     label = _run_label(ticker.get("symbol"), ticker.get("timeframe"))
-    _, _, baseline_score, _ = _load_completed_state(label, "grid")
+    _, _, baseline_score, _ = _load_completed_state(
+        label, "grid", config.get("strategy", DEFAULT_STRATEGY)
+    )
     round_budget = max(1.0, timeframe_budget / rounds)
     symbol = str(ticker.get("symbol", "")).strip().upper()
     timeframe = str(ticker.get("timeframe", "")).strip().lower()
@@ -474,7 +559,7 @@ def _process_symbol(
 ) -> Tuple[List[Dict[str, Any]], List[List[Any]]]:
     """Worker entry point (runs in a child process)."""
     progress_rows: List[List[Any]] = []
-    with _TickerLock(symbol) as lock_acquired:
+    with _TickerLock(symbol, config.get("strategy", DEFAULT_STRATEGY)) as lock_acquired:
         if not lock_acquired:
             note = (
                 f"{symbol}: skipped because another optimizer process "
@@ -499,7 +584,7 @@ def _process_symbol(
     return results, progress_rows
 
 
-def _write_aggregate_results(results: List[Dict[str, Any]]) -> None:
+def _write_aggregate_results(results: List[Dict[str, Any]], strategy: str = DEFAULT_STRATEGY) -> None:
     fieldnames = [
         "symbol",
         "phase",
@@ -542,7 +627,7 @@ def _write_aggregate_results(results: List[Dict[str, Any]]) -> None:
             })
         new_rows[key] = row
 
-    aggregate_lock = _TickerLock("__aggregate_results__")
+    aggregate_lock = _TickerLock("__aggregate_results__", strategy)
     for _ in range(100):
         if aggregate_lock.acquire():
             break
@@ -551,8 +636,8 @@ def _write_aggregate_results(results: List[Dict[str, Any]]) -> None:
         raise RuntimeError("Could not acquire the aggregate results lock within 5 seconds")
 
     try:
-        output_dir = Path("optimizer_results")
-        output_dir.mkdir(exist_ok=True)
+        output_dir = strategy_dir("optimizer_results", strategy)
+        output_dir.mkdir(parents=True, exist_ok=True)
         aggregate_path = output_dir / "best_presets.csv"
         merged_rows: Dict[str, Dict[str, Any]] = {}
         if aggregate_path.exists():
@@ -578,8 +663,11 @@ def _write_aggregate_results(results: List[Dict[str, Any]]) -> None:
         aggregate_lock.release()
 
 
-def main() -> None:
-    config = load_config()
+def main(strategy: str = DEFAULT_STRATEGY) -> None:
+    strategy = normalize_strategy(strategy)
+    config = apply_strategy(load_config(), strategy)
+    print(f"Strategy: {STRATEGY_LABELS[strategy]} "
+          f"(results in {strategy_dir('optimizer_results', strategy)}/)")
     tickers = config.get("tickers", []) or discover_tsvs_auto()
     if not tickers:
         print("No tickers found in config and no TSVs discovered in data/. Exiting.")
@@ -618,7 +706,7 @@ def main() -> None:
         ])
         gated_tickers.append(ticker)
 
-    progress_path = Path("optimizer_results") / "progress.csv"
+    progress_path = strategy_dir("optimizer_results", strategy) / "progress.csv"
     _write_progress_rows(progress_path, progress_rows)
     if not gated_tickers:
         print("No tickers passed the status, sanity, and parity gates. Exiting.")
@@ -638,7 +726,7 @@ def main() -> None:
         final_results.extend(symbol_results)
         progress_rows.extend(symbol_progress)
         if symbol_results:
-            _write_aggregate_results(symbol_results)
+            _write_aggregate_results(symbol_results, strategy)
         _write_progress_rows(progress_path, progress_rows)
 
     workers = min(workers, len(symbol_groups))
@@ -656,9 +744,9 @@ def main() -> None:
                 _record(future.result())
 
     _write_progress_rows(progress_path, progress_rows)
-    print("Optimization complete. Results in optimizer_results/")
+    print(f"Optimization complete. Results in {strategy_dir('optimizer_results', strategy)}/")
     print(f"Elapsed: {time() - started_at:.1f}s")
 
 
 if __name__ == "__main__":
-    main()
+    main(choose_strategy())

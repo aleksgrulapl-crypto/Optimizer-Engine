@@ -97,5 +97,21 @@ Outputs:
 - optimizer_results/report_{SYMBOL}_refine.json     (optimize_single.py)
 - optimizer_results/progress_single.csv             (optimize_single.py)
 
+Strategy selection (Supertrend or Day Box):
+   python optimize_all.py                      # prompts 1. Supertrend / 2. Day Box when run in a terminal
+   python optimize_all.py --strategy supertrend
+   python optimize_all.py --strategy daybox
+   python optimize_single.py --symbol NVDA --strategy daybox
+   Without --strategy and without a terminal (unattended runs) Supertrend is used.
+   Day Box uses the same tickers.yaml tickers/TSVs/filters, optimizes
+   retestTolerancePct, rejectionTolerancePct, riskReward and slBufferPct (grid and
+   fixed Pine inputs configurable under the "daybox:" block in tickers.yaml) with
+   backtest_daybox.py, and writes ONLY to separate folders:
+   - optimizer_results/daybox/  (best_*.csv, report_*.json, best_presets.csv, progress.csv)
+   - completed_runs/daybox/ and checkpoints/daybox/
+   Supertrend results stay in the original top-level folders.
+   Extended hours: like Supertrend, Day Box trades every bar in the TSV (pre/after-market included);
+   no session filter is applied and the previous day's high/low box includes extended-hours bars.
+
 Tests:
    python -m unittest discover -s tests -v
