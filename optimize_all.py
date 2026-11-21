@@ -80,10 +80,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 # (retest 0.10, rejection 0.10, RR 2.0, SL buffer 0.10). Override in tickers.yaml
 # under `daybox:`.
 DAYBOX_DEFAULT_GRID: Dict[str, Any] = {
-    "retestTolerancePct": {"start": 0.02, "stop": 0.50, "step": 0.02},
-    "rejectionTolerancePct": {"start": 0.02, "stop": 0.50, "step": 0.02},
+    "retestTolerancePct": {"start": 0.02, "stop": 2.00, "step": 0.02},
+    "rejectionTolerancePct": {"start": 0.02, "stop": 2.00, "step": 0.02},
     "riskReward": {"start": 1.0, "stop": 4.0, "step": 0.1},
-    "slBufferPct": {"start": 0.02, "stop": 0.50, "step": 0.02},
+    "slBufferPct": {"start": 0.02, "stop": 2.00, "step": 0.02},
 }
 
 STRATEGY_LABELS = {"supertrend": "Supertrend", "daybox": "Day Box"}
