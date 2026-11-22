@@ -89,6 +89,8 @@ def _build_daybox_refinement_grid(base: Dict[str, Any]) -> Dict[str, Any]:
         "rejectionTolerancePct": _frange(max(0.01, rejection - 0.10), rejection + 0.10, 0.01),
         "riskReward": _frange(max(0.5, rr - 0.5), rr + 0.5, 0.1),
         "slBufferPct": _frange(max(0.01, buffer - 0.10), buffer + 0.10, 0.01),
+        "enableBreakouts": [bool(base.get("enableBreakouts", True))],
+        "enableRejections": [bool(base.get("enableRejections", True))],
     }
 
 
