@@ -84,6 +84,8 @@ DAYBOX_DEFAULT_GRID: Dict[str, Any] = {
     "rejectionTolerancePct": {"start": 0.02, "stop": 2.00, "step": 0.02},
     "riskReward": {"start": 1.0, "stop": 4.0, "step": 0.1},
     "slBufferPct": {"start": 0.02, "stop": 2.00, "step": 0.02},
+    "enableBreakouts": [True, False],
+    "enableRejections": [True, False],
 }
 
 STRATEGY_LABELS = {"supertrend": "Supertrend", "daybox": "Day Box"}

@@ -1105,13 +1105,13 @@ daybox:
     rejectionTolerancePct:   {start: 0.02, stop: 2.00, step: 0.02}
     riskReward:              {start: 1.0, stop: 4.0, step: 0.1}
     slBufferPct:             {start: 0.02, stop: 2.00, step: 0.02}
+    enableBreakouts:         [true, false]   # optimized alongside the numeric params
+    enableRejections:        [true, false]
   execution:
     intrabar_path: tv         # tv = TradingView rule; ohlc / olhc also accepted
   params:                     # fixed Pine inputs (not optimized)
     dayTimezone: America/New_York   # timezone used to split days (exchange time)
     utcOffset: 0
-    enableBreakouts: true
-    enableRejections: true
     enableLongs: true
     enableShorts: true
     requireBreakoutClose: true
